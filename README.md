@@ -59,7 +59,7 @@ To receive messages from Telegram, you need to set up the webhook URL. You can d
 6. Copy the HTTPS URL (e.g., `https://abc123.ngrok.io`)
 7. Set the webhook:
    ```bash
-   curl -X POST "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://abc123.ngrok.io/api/telegram/webhook"
+   curl -X POST "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://htwpdl78-3000.inc1.devtunnels.ms//api/telegram/webhook"
    ```
 
 #### Option B: Using localtunnel (for local development, no signup required)

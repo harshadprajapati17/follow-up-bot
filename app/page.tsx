@@ -8,12 +8,20 @@ export default function Home() {
         <p className="text-lg text-gray-600 mb-6">
           Webhook endpoint: <code className="bg-gray-100 px-2 py-1 rounded">/api/telegram/webhook</code>
         </p>
-        <Link
-          href="/sheet-view"
-          className="inline-flex items-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-        >
-          Open Sheet View →
-        </Link>
+        <div className="flex flex-wrap justify-center gap-3">
+          <Link
+            href="/sheet-view"
+            className="inline-flex items-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+          >
+            Open Sheet View →
+          </Link>
+          <Link
+            href="/cron-job"
+            className="inline-flex items-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+          >
+            Cron Job →
+          </Link>
+        </div>
       </div>
     </main>
   )

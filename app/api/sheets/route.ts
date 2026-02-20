@@ -33,19 +33,27 @@ type SheetsRequestBody = ReadBody | UpdateBody;
 
 /**
  * Checks if the request body has the required fields for the given action.
- * Returns an error message string if invalid, or null if valid.
+ * spreadsheetId may be omitted if GOOGLE_SHEET_ID env is set.
  */
 function validateBody(body: unknown): body is SheetsRequestBody {
   if (!body || typeof body !== 'object') return false;
   const b = body as Record<string, unknown>;
   if (b.action !== 'read' && b.action !== 'update') return false;
-  if (typeof b.spreadsheetId !== 'string' || !b.spreadsheetId.trim()) return false;
+  const hasSheetId = typeof b.spreadsheetId === 'string' && b.spreadsheetId.trim().length > 0;
+  const envSheetId = process.env.GOOGLE_SHEET_ID?.trim();
+  if (!hasSheetId && !envSheetId) return false;
   if (typeof b.range !== 'string' || !b.range.trim()) return false;
   if (b.action === 'update') {
     if (!Array.isArray(b.values)) return false;
     if (!b.values.every((row) => Array.isArray(row) && row.every((c) => typeof c === 'string'))) return false;
   }
   return true;
+}
+
+/** Resolve spreadsheet ID from body or env (call after validateBody). */
+function resolveSpreadsheetId(body: SheetsRequestBody): string {
+  const fromBody = typeof body.spreadsheetId === 'string' ? body.spreadsheetId.trim() : '';
+  return fromBody || process.env.GOOGLE_SHEET_ID?.trim() || '';
 }
 
 /**
@@ -58,7 +66,7 @@ function validateBody(body: unknown): body is SheetsRequestBody {
  *
  * Payload (JSON body):
  *   - action: "read" | "update"  (required)
- *   - spreadsheetId: string     (required) — Sheet ID from URL (between /d/ and /edit)
+ *   - spreadsheetId: string     (optional) — Sheet ID from URL; falls back to GOOGLE_SHEET_ID env
  *   - range: string             (required) — A1 notation, e.g. "Sheet1!A1:D10"
  *   - values: string[][]        (required for action "update") — 2D array of cell values
  *
@@ -91,7 +99,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { action, spreadsheetId, range } = body;
+    const { action, range } = body;
+    const spreadsheetId = resolveSpreadsheetId(body);
 
     if (action === 'read') {
       const data = await readSheet(spreadsheetId, range);
