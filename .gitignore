@@ -35,3 +35,7 @@ pnpm-debug.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# pnpm store (local package cache)
+.pnpm-store/
+.pnpm-workspace/

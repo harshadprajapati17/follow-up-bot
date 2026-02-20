@@ -3,6 +3,8 @@ export const metadata = {
   description: 'Next.js app with Telegram bot integration',
 }
 
+import "./globals.css";
+
 export default function RootLayout({
   children,
 }: {
