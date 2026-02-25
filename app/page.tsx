@@ -1,27 +1,33 @@
-import Link from "next/link";
-
 export default function Home() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-24">
       <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4">Telegram Bot Webhook</h1>
+        <h1 className="text-4xl font-bold mb-4">AI Assistant Backend</h1>
         <p className="text-lg text-gray-600 mb-6">
-          Webhook endpoint: <code className="bg-gray-100 px-2 py-1 rounded">/api/telegram/webhook</code>
+          This branch is a minimal backend focused on two pieces:
         </p>
-        <div className="flex flex-wrap justify-center gap-3">
-          <Link
-            href="/sheet-view"
-            className="inline-flex items-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-          >
-            Open Sheet View →
-          </Link>
-          <Link
-            href="/cron-job"
-            className="inline-flex items-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-          >
-            Cron Job →
-          </Link>
-        </div>
+        <ul className="mx-auto mb-8 max-w-xl text-left text-gray-700 space-y-3">
+          <li>
+            <span className="font-semibold">1. Telegram webhook</span>{" "}
+            <code className="bg-gray-100 px-2 py-1 rounded text-sm">
+              /api/telegram/webhook
+            </code>
+          </li>
+          <li>
+            <span className="font-semibold">2. Text-to-Speech (Sarvam TTS)</span>{" "}
+            <code className="bg-gray-100 px-2 py-1 rounded text-sm">
+              /api/tts
+            </code>
+          </li>
+        </ul>
+        <p className="text-sm text-gray-500">
+          Configure environment variables for Telegram, Sarvam, Google Sheets and S3,
+          then point your Telegram bot webhook to{" "}
+          <code className="bg-gray-100 px-2 py-1 rounded text-xs">
+            /api/telegram/webhook
+          </code>
+          .
+        </p>
       </div>
     </main>
   )
