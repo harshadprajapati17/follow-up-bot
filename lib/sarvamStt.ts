@@ -9,6 +9,9 @@
 
 const SARVAM_STT_URL = 'https://api.sarvam.ai/speech-to-text';
 
+// STT model from env only (e.g. saarika:v2.5, saaras:v3). Other params use code defaults.
+const STT_MODEL = process.env.SARVAM_STT_MODEL;
+
 export interface SarvamSttOptions {
   /** BCP-47 language code (e.g. hi-IN, en-IN). Use "unknown" for auto-detect. */
   language_code?: string;
@@ -50,14 +53,18 @@ export async function transcribeAudio(
   const blob = new Blob([new Uint8Array(audioBuffer)], { type: mimeType });
   formData.append('file', blob, filename);
 
-  if (options.language_code) {
-    formData.append('language_code', options.language_code);
+  const languageCode = options.language_code ?? 'unknown';
+  const model = options.model ?? STT_MODEL;
+  const mode = options.mode;
+
+  if (languageCode) {
+    formData.append('language_code', languageCode);
   }
-  if (options.model) {
-    formData.append('model', options.model);
+  if (model) {
+    formData.append('model', model);
   }
-  if (options.mode) {
-    formData.append('mode', options.mode);
+  if (mode) {
+    formData.append('mode', mode);
   }
 
   try {
@@ -79,6 +86,8 @@ export async function transcribeAudio(
     const transcript = data?.transcript?.trim() ?? null;
     if (transcript) {
       console.log('[sarvamStt] Transcribed:', transcript.slice(0, 80) + (transcript.length > 80 ? '...' : ''));
+    } else {
+      console.warn('[sarvamStt] No transcript in response:', JSON.stringify(data));
     }
     return transcript;
   } catch (err) {

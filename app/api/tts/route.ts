@@ -9,8 +9,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { textToSpeech } from '@/lib/tts';
 
-/** Max length Sarvam TTS accepts for a single request (Bulbul v3). */
+/** Max length Sarvam TTS accepts for a single request. */
 const MAX_TEXT_LENGTH = 2500;
 
 /** Shape of the request body. */
@@ -85,17 +86,6 @@ function validateBody(body: unknown): body is TTSRequestBody {
  */
 export async function POST(request: NextRequest) {
   try {
-    const apiKey = process.env.SARVAM_API_KEY;
-    if (!apiKey?.trim()) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'TTS not configured. Set SARVAM_API_KEY in the environment.',
-        },
-        { status: 503 }
-      );
-    }
-
     const body = await request.json();
     if (!validateBody(body)) {
       return NextResponse.json(
@@ -112,69 +102,42 @@ export async function POST(request: NextRequest) {
       target_language_code = 'en-IN',
       speaker = 'hitesh',
       model = 'bulbul:v2',
-      pace = 1,
-      sample_rate = 24000,
       output_format = 'mp3',
     } = body;
 
-    const payload = {
-      text: text.trim(),
+    const audioBuffer = await textToSpeech(text, {
       target_language_code,
       speaker,
       model,
-      pace,
-      sample_rate,
       output_format,
-    };
-
-    const res = await fetch('https://api.sarvam.ai/text-to-speech', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'api-subscription-key': apiKey,
-      },
-      body: JSON.stringify(payload),
     });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      console.error('[api/tts] Sarvam API error:', res.status, errText);
+    if (!audioBuffer) {
       return NextResponse.json(
         {
           success: false,
-          error: `TTS request failed (${res.status}). ${errText.slice(0, 200)}`,
+          error: 'TTS request failed or returned no audio. Check SARVAM_API_KEY and payload.',
         },
-        { status: res.status >= 500 ? 502 : res.status }
-      );
-    }
-
-    const data = await res.json();
-    // Sarvam returns { request_id, audios } — audios is an array of base64 strings or objects.
-    const audios = data?.audios;
-    const first = Array.isArray(audios) && audios.length > 0 ? audios[0] : undefined;
-    const audioBase64 =
-      typeof first === 'string'
-        ? first
-        : first && typeof first === 'object'
-          ? (first as { audio_content?: string; audio?: string }).audio_content ??
-            (first as { audio?: string }).audio
-          : undefined;
-    const resolved =
-      audioBase64 ?? data?.audio_content ?? data?.audioBase64 ?? data?.audio;
-    if (!resolved || typeof resolved !== 'string') {
-      console.error('[api/tts] Unexpected Sarvam response shape:', Object.keys(data ?? {}));
-      return NextResponse.json(
-        { success: false, error: 'TTS returned invalid response (no audio).' },
         { status: 502 }
       );
     }
 
-    const contentType = output_format === 'wav' ? 'audio/wav' : output_format === 'mp3' ? 'audio/mpeg' : `audio/${output_format}`;
-    return NextResponse.json({
-      success: true,
-      audioBase64: resolved,
-      contentType,
-    });
+    const audioBase64 = audioBuffer.toString('base64');
+    const contentType =
+      output_format === 'wav'
+        ? 'audio/wav'
+        : output_format === 'mp3'
+          ? 'audio/mpeg'
+          : `audio/${output_format}`;
+
+    return NextResponse.json(
+      {
+        success: true,
+        audioBase64,
+        contentType,
+      },
+      { status: 200 }
+    );
   } catch (err) {
     console.error('[api/tts] Error:', err);
     return NextResponse.json(
