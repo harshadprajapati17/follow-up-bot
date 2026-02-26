@@ -4,6 +4,7 @@ import { useState } from 'react';
 import {
   type ConversationState,
   type LeadAnalyzeLikeResponse,
+  type Dependency,
   runLeadOrchestrator,
 } from '@/lib/leadOrchestrator';
 import type { LeadIntentResult } from '@/lib/leadIntent';
@@ -35,17 +36,23 @@ export default function LeadTestPage() {
     leadStatus: 'NEW',
   });
   const [orchestratorReply, setOrchestratorReply] = useState<string | null>(null);
+  const [orchestratorToolCall, setOrchestratorToolCall] = useState<{ name: string; arguments: Record<string, unknown> } | null>(null);
+  const [orchestratorDependencies, setOrchestratorDependencies] = useState<Dependency[] | null>(null);
+  const [orchestratorMissing, setOrchestratorMissing] = useState<Record<string, boolean> | null>(null);
   const [detectedIntent, setDetectedIntent] = useState<LeadIntentResult | null>(null);
   const [traceLog, setTraceLog] = useState<TraceEntry[]>([]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setIsLoading(true);
-    setResponse(null);
-    setRawJson('');
-    setOrchestratorReply(null);
-    setDetectedIntent(null);
-    setTraceLog([]);
+      setResponse(null);
+      setRawJson('');
+      setOrchestratorReply(null);
+      setOrchestratorToolCall(null);
+      setOrchestratorDependencies(null);
+      setOrchestratorMissing(null);
+      setDetectedIntent(null);
+      setTraceLog([]);
 
     try {
       addLog(setTraceLog, '1. Text received', text.trim() || '(empty)');
@@ -71,7 +78,7 @@ export default function LeadTestPage() {
       const needsAnalyze =
         intent &&
         (intent.intent === 'NEW_LEAD' ||
-          intent.intent === 'ESTIMATION_FOR_EXISTING_LEAD' ||
+          intent.intent === 'GENERATE_QUOTE_OPTIONS' ||
           intent.intent === 'UPDATE_EXISTING_LEAD');
 
       addLog(
@@ -104,15 +111,23 @@ export default function LeadTestPage() {
       setRawJson(JSON.stringify(json, null, 2));
 
       addLog(setTraceLog, '5. Orchestrator input', `state: ${JSON.stringify(orchestratorState)}, intent: ${intent?.intent ?? 'undefined'}`);
-      const { reply, newState } = runLeadOrchestrator({
+      const { reply, newState, toolCall, dependencies, missing } = runLeadOrchestrator({
         text,
         state: orchestratorState,
         analysis: json,
         intent: intent ?? undefined,
+        measurements: undefined, // TODO: Pass actual measurements from your data source
       });
       setOrchestratorState(newState);
       setOrchestratorReply(reply);
-      addLog(setTraceLog, '5. Orchestrator output', `reply: ${reply}\nnewState: ${JSON.stringify(newState, null, 2)}`);
+      setOrchestratorToolCall(toolCall ?? null);
+      setOrchestratorDependencies(dependencies ?? null);
+      setOrchestratorMissing(missing ?? null);
+      addLog(
+        setTraceLog,
+        '5. Orchestrator output',
+        `reply: ${reply}\nnewState: ${JSON.stringify(newState, null, 2)}${toolCall ? `\ntoolCall: ${JSON.stringify(toolCall, null, 2)}` : ''}${dependencies ? `\ndependencies: ${JSON.stringify(dependencies, null, 2)}` : ''}${missing ? `\nmissing: ${JSON.stringify(missing, null, 2)}` : ''}`
+      );
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Request failed. Check console for details.';
       setResponse({
@@ -227,23 +242,43 @@ export default function LeadTestPage() {
                       {orchestratorReply}
                     </li>
                   )}
-                  {response.missing && Object.keys(response.missing).length > 0 && (
+                  {orchestratorToolCall && (
                     <li>
-                      <span className="font-medium">Missing fields:</span>{' '}
-                      {Object.keys(response.missing).join(', ')}
+                      <span className="font-medium">Tool Call:</span>{' '}
+                      <code className="rounded bg-gray-100 px-1 py-0.5 text-xs">
+                        {orchestratorToolCall.name}
+                      </code>
+                      <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-gray-600">
+                        {JSON.stringify(orchestratorToolCall.arguments, null, 2)}
+                      </pre>
                     </li>
                   )}
-                  {response.followup_questions &&
-                    response.followup_questions.length > 0 && (
-                      <li>
-                        <span className="font-medium">Follow-up questions:</span>
-                        <ul className="mt-1 list-inside list-disc pl-4">
-                          {response.followup_questions.map((q) => (
-                            <li key={q}>{q}</li>
-                          ))}
-                        </ul>
-                      </li>
-                    )}
+                  {orchestratorDependencies && orchestratorDependencies.length > 0 && (
+                    <li>
+                      <span className="font-medium">Pending Dependencies:</span>
+                      <ul className="mt-1 list-inside list-disc pl-4 space-y-1">
+                        {orchestratorDependencies.map((dep, idx) => (
+                          <li key={idx} className="text-xs">
+                            <span className="font-semibold text-orange-600">
+                              [{dep.type}]
+                            </span>{' '}
+                            {dep.message}
+                            {dep.action && (
+                              <span className="text-gray-500 ml-1">
+                                (Action: {dep.action})
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  )}
+                  {orchestratorMissing && Object.keys(orchestratorMissing).length > 0 && (
+                    <li>
+                      <span className="font-medium">Missing fields:</span>{' '}
+                      {Object.keys(orchestratorMissing).join(', ')}
+                    </li>
+                  )}
                 </ul>
               ) : (
                 <p className="text-sm text-red-600">

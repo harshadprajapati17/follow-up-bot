@@ -3,7 +3,7 @@ import { generateGeminiJson } from '@/lib/gemini';
 export type HighLevelIntent =
   | 'GREETING'
   | 'NEW_LEAD'
-  | 'ESTIMATION_FOR_EXISTING_LEAD'
+  | 'GENERATE_QUOTE_OPTIONS'
   | 'UPDATE_EXISTING_LEAD'
   | 'LOG_MEASUREMENT'
   | 'GENERAL_QUESTION'
@@ -45,8 +45,8 @@ User message:
 
 Classify the message into one of these intents:
 - "GREETING"  → pure greetings / pleasantries, like "hi", "hello", "namaste", "good morning", etc.
-- "NEW_LEAD" → user is giving details of a new painting job (location, rooms, repainting, etc.).
-- "ESTIMATION_FOR_EXISTING_LEAD" → user is asking for an estimate / quotation for a job that was already discussed or visited earlier.
+- "NEW_LEAD" → user is giving details of a new painting job (location, rooms, repainting, etc.). This should include job details like location, customer name, job type, or scope. If the message is ONLY asking for a quote/estimate without providing new job details, it's likely NOT a new lead.
+- "GENERATE_QUOTE_OPTIONS" → user is asking for an estimate / quotation for a job that was already discussed or visited earlier. This includes messages asking for quotes, pricing options (basic/standard/premium), timelines, advance payment details, or any quote-related request where the job context is already established.
 - "UPDATE_EXISTING_LEAD" → user wants to change details of an already captured job (change colour, area, date, etc.).
 - "LOG_MEASUREMENT" → user is dictating site measurement / technical details (BHK, sqft, paintable area, ceilings, coats, putty level, dampness, brand preference) that should be attached to an existing job/lead.
 - "GENERAL_QUESTION" → user is asking a generic question (e.g. about rates, paint types, process) not tied clearly to a new or existing lead.
@@ -54,6 +54,8 @@ Classify the message into one of these intents:
 
 Guidance:
 - Prefer "LOG_MEASUREMENT" instead of "NEW_LEAD" when the text looks like measurement / area / putty / dampness / coats / paint brand details and there is no clear statement that this is a completely new job.
+- IMPORTANT: If a message asks for a quote/estimate with specific requirements (e.g., "quote banao", "3 options", "timeline", "advance payment", pricing tiers) but does NOT provide new job details (location, customer name, job type), it should be classified as "GENERATE_QUOTE_OPTIONS", not "NEW_LEAD". Quote requests typically indicate the job context is already established.
+- "NEW_LEAD" should only be used when the user is providing NEW job information (location, customer details, job scope, etc.), not just asking for quotes or estimates.
 
 Also, when possible:
 - Put a short "lead_hint" like "HSR 2BHK Rahil", "Whitefield villa", "yesterday's site" if the message clearly refers to a specific project.

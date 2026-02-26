@@ -12,9 +12,6 @@ interface LeadAnalyzeRequestBody {
 interface LeadAnalyzeResponse {
   success: boolean;
   data?: LeadAnalysis;
-  missing?: Record<string, boolean>;
-  followup_questions?: string[];
-  confirmation?: string;
   error?: string;
 }
 
@@ -22,7 +19,7 @@ interface LeadAnalyzeResponse {
  * POST /api/lead/analyze
  * ----------------------
  * Takes a free-form text (usually a voice transcript) and returns structured
- * lead information plus which important fields are still missing.
+ * lead information extracted by LLM.
  *
  * Request body (JSON):
  *   - text: string                 (required)  — User utterance, max 2000 chars
@@ -41,19 +38,13 @@ interface LeadAnalyzeResponse {
  *       "scope_hint": { "interior": true, "exterior": false },
  *       "urgency": "next_week",
  *       "preferred_language": "hi"
- *     },
- *     "missing": {
- *       "customer_phone": true,
- *       "urgency": true
- *     },
- *     "followup_questions": [
- *       "Customer ka mobile number share karoge? (+91 se start ho sakta hai)",
- *       "Ye kaam kab tak karwana hai? (aaj, kal, iss hafte, next week, etc.)"
- *     ]
+ *     }
  *   }
  *
  * Error response (400 / 500):
  *   { "success": false, "error": "message" }
+ *
+ * Note: Question generation is handled by the orchestrator based on intent and dependencies.
  *
  * Sample cURL:
  *   curl -X POST http://localhost:3000/api/lead/analyze \\
@@ -131,62 +122,11 @@ export async function POST(request: NextRequest) {
       preferredLanguage,
     });
 
-    // Work out which important fields are still missing and prepare human questions.
-    const missing: Record<string, boolean> = {};
-    const followup_questions: string[] = [];
-
-    if (!analysis.customer.name) {
-      missing.customer_name = true;
-      followup_questions.push('Customer ka naam kya hai?');
-    }
-    if (!analysis.customer.phone) {
-      missing.customer_phone = true;
-      followup_questions.push('Customer ka mobile number share karoge? (+91 se start ho sakta hai)');
-    }
-    if (!analysis.location_text) {
-      missing.location_text = true;
-      followup_questions.push('Site ka exact location batao (area + street / landmark).');
-    }
-    if (analysis.job_type === 'unknown') {
-      missing.job_type = true;
-      followup_questions.push(
-        'Painting ka exact kaam batao – kis area mein (room / poora ghar / office / exterior), kaunsi surface (wall, ceiling, door/window, metal, wood) aur purana paint ki condition kaisi hai?'
-      );
-    }
-    if (analysis.urgency === 'unknown') {
-      missing.urgency = true;
-      followup_questions.push('Ye kaam kab tak karwana hai? (aaj, kal, iss hafte, next week, etc.)');
-    }
-
-    const hasMissing = Object.keys(missing).length > 0;
-
-    let confirmation: string | undefined;
-    if (!hasMissing) {
-      const summaryParts: string[] = [];
-      if (analysis.customer.name) {
-        summaryParts.push(`Customer: ${analysis.customer.name}`);
-      }
-      if (analysis.location_text) {
-        summaryParts.push(`Location: ${analysis.location_text}`);
-      }
-      if (analysis.job_type && analysis.job_type !== 'unknown') {
-        summaryParts.push(`Job: ${analysis.job_type}`);
-      }
-      if (analysis.urgency && analysis.urgency !== 'unknown') {
-        summaryParts.push(`Urgency: ${analysis.urgency}`);
-      }
-
-      const recap = summaryParts.length ? ` Quick recap – ${summaryParts.join(', ')}.` : '';
-      confirmation = `Mere hisaab se painting ka kaam samajh aa gaya hai aur saari important details mil gayi hain.${recap} Kya yeh sahi hai?`;
-    }
-
-    // Build the final API response object sent back to the client.
+    // Build the final API response - just return the analyzed data.
+    // Question generation is handled by the orchestrator based on intent and dependencies.
     const res: LeadAnalyzeResponse = {
       success: true,
       data: analysis,
-      missing: hasMissing ? missing : undefined,
-      followup_questions: followup_questions.length ? followup_questions : undefined,
-      confirmation,
     };
 
     return NextResponse.json(res, { status: 200 });
