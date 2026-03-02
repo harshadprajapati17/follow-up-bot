@@ -1,4 +1,4 @@
-import { MongoClient, Db } from 'mongodb';
+import { MongoClient, Db, ObjectId } from 'mongodb';
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const DEFAULT_DB_NAME = process.env.MONGODB_DB_NAME || 'conversation-bot';
@@ -33,6 +33,445 @@ export async function getMongoDb(dbName: string = DEFAULT_DB_NAME): Promise<Db |
   const client = await getMongoClient();
   if (!client) return null;
   return client.db(dbName);
+}
+
+export async function getRecentLeadsForUser(params: {
+  userId: string;
+  limit?: number;
+}): Promise<LeadSummary[]> {
+  const db = await getMongoDb();
+  if (!db) return [];
+
+  const { userId, limit = 5 } = params;
+
+  try {
+    const collection = db.collection<LeadDocument>('leads');
+    const cursor = collection
+      .find(
+        { userId },
+        {
+          projection: {
+            customer_name: 1,
+            customer_phone: 1,
+            location_text: 1,
+            createdAt: 1,
+          },
+        }
+      )
+      .sort({ createdAt: -1 })
+      .limit(limit);
+
+    const docs = await cursor.toArray();
+
+    return docs.map((doc) => ({
+      id: doc._id ? doc._id.toHexString() : '',
+      customer_name: doc.customer_name ?? null,
+      customer_phone: doc.customer_phone ?? null,
+      location_text: doc.location_text ?? null,
+      createdAt: doc.createdAt,
+    }));
+  } catch (err) {
+    console.error('[mongo] Failed to fetch recent leads for user:', err);
+    return [];
+  }
+}
+
+type LeadEntities = Record<string, unknown>;
+
+export interface LeadDocument {
+  _id?: ObjectId;
+  userId: string;
+  contractor_id: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  location_text: string | null;
+  job_scope: string | null;
+  property_size_type: string | null;
+  property_area_sqft: number | null;
+  is_repaint: boolean | null;
+  start_timing: string | null;
+  start_date: Date | null;
+  finish_quality: string | null;
+  site_visit_preference: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface VisitDocument {
+  _id?: ObjectId;
+  leadId: ObjectId;
+  date: string | null;
+  time: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface MeasurementDocument {
+  _id?: ObjectId;
+  leadId: ObjectId;
+  measurement_area: string | null;
+  measurements?: unknown;
+  /**
+   * Structured list of issues captured during LOG_MEASUREMENT, if any.
+   * Shape is controlled at the orchestrator/LLM layer and stored as-is.
+   */
+  issues?: unknown;
+  /**
+   * Recommended painter add-ons inferred from issues/symptoms during LOG_MEASUREMENT.
+   * E.g. damp treatment, crack repair, terrace waterproofing, etc.
+   * Shape is controlled at the orchestrator/LLM layer and stored as-is.
+   */
+  recommended_addons?: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface LeadSummary {
+  id: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  location_text: string | null;
+  createdAt: Date;
+}
+
+export interface LeadDetails extends LeadDocument {
+  id: string;
+}
+
+/**
+ * Fetch a single lead for a given user by its Mongo ObjectId string.
+ * Returns a lightweight summary or null if not found / invalid.
+ */
+export async function getLeadByIdForUser(params: {
+  userId: string;
+  leadId: string;
+}): Promise<LeadSummary | null> {
+  const db = await getMongoDb();
+  if (!db) return null;
+
+  const { userId, leadId } = params;
+  const objectId = toObjectId(leadId);
+  if (!objectId) return null;
+
+  try {
+    const collection = db.collection<LeadDocument>('leads');
+    const doc = await collection.findOne(
+      { _id: objectId, userId },
+      {
+        projection: {
+          customer_name: 1,
+          customer_phone: 1,
+          location_text: 1,
+          createdAt: 1,
+        },
+      }
+    );
+
+    if (!doc) {
+      return null;
+    }
+
+    return {
+      id: doc._id ? doc._id.toHexString() : '',
+      customer_name: doc.customer_name ?? null,
+      customer_phone: doc.customer_phone ?? null,
+      location_text: doc.location_text ?? null,
+      createdAt: doc.createdAt,
+    };
+  } catch (err) {
+    console.error('[mongo] Failed to fetch lead by id for user:', err);
+    return null;
+  }
+}
+
+/**
+ * Fetch the full lead document (all fields) for a given user + lead id.
+ * Used for read-only "lead details" style summaries.
+ */
+export async function getLeadDetailsForUser(params: {
+  userId: string;
+  leadId: string;
+}): Promise<LeadDetails | null> {
+  const db = await getMongoDb();
+  if (!db) return null;
+
+  const { userId, leadId } = params;
+  const objectId = toObjectId(leadId);
+  if (!objectId) return null;
+
+  try {
+    const collection = db.collection<LeadDocument>('leads');
+    const doc = await collection.findOne({ _id: objectId, userId });
+    if (!doc) return null;
+
+    const { _id, ...rest } = doc;
+    return {
+      ...(rest as LeadDocument),
+      id: _id ? _id.toHexString() : leadId,
+    };
+  } catch (err) {
+    console.error('[mongo] Failed to fetch full lead details for user:', err);
+    return null;
+  }
+}
+
+function toObjectId(id: string): ObjectId | null {
+  try {
+    return new ObjectId(id);
+  } catch {
+    console.warn('[mongo] Invalid ObjectId string received:', id);
+    return null;
+  }
+}
+
+function getString(entities: LeadEntities, key: string): string | null {
+  const value = entities[key];
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function getBoolean(entities: LeadEntities, key: string): boolean | null {
+  const value = entities[key];
+  if (typeof value === 'boolean') return value;
+  return null;
+}
+
+function getNumber(entities: LeadEntities, key: string): number | null {
+  const value = entities[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function getDateFromString(entities: LeadEntities, key: string): Date | null {
+  const value = entities[key];
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const d = new Date(trimmed);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Create a new lead document in MongoDB from normalized entities.
+ * Returns the created lead's string id (Mongo ObjectId) or null on failure.
+ */
+export async function createLeadFromEntities(params: {
+  userId: string;
+  entities: LeadEntities;
+}): Promise<string | null> {
+  const db = await getMongoDb();
+  if (!db) return null;
+
+  const collection = db.collection<LeadDocument>('leads');
+  const { userId, entities } = params;
+  const now = new Date();
+
+  const doc: LeadDocument = {
+    userId,
+    contractor_id: getString(entities, 'contractor_id'),
+    customer_name: getString(entities, 'customer_name'),
+    customer_phone: getString(entities, 'customer_phone'),
+    location_text: getString(entities, 'location_text'),
+    job_scope: getString(entities, 'job_scope'),
+    property_size_type: getString(entities, 'property_size_type'),
+    property_area_sqft: getNumber(entities, 'property_area_sqft'),
+    is_repaint: getBoolean(entities, 'is_repaint'),
+    start_timing: getString(entities, 'start_timing'),
+    start_date: getDateFromString(entities, 'start_date'),
+    finish_quality: getString(entities, 'finish_quality'),
+    site_visit_preference: getString(entities, 'site_visit_preference'),
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  try {
+    const result = await collection.insertOne(doc);
+    const id = result.insertedId.toHexString();
+    console.log('[mongo] Created lead', id);
+    return id;
+  } catch (err) {
+    console.error('[mongo] Failed to create lead:', err);
+    return null;
+  }
+}
+
+/**
+ * Update an existing lead document in MongoDB from normalized entities.
+ * Only non-null fields are applied. Silently no-ops on invalid id.
+ */
+export async function updateLeadFromEntities(params: {
+  leadId: string;
+  entities: LeadEntities;
+}): Promise<void> {
+  const db = await getMongoDb();
+  if (!db) return;
+
+  const objectId = toObjectId(params.leadId);
+  if (!objectId) return;
+
+  const collection = db.collection<LeadDocument>('leads');
+  const { entities } = params;
+  const now = new Date();
+
+  const update: Partial<LeadDocument> = {};
+
+  const contractorId = getString(entities, 'contractor_id');
+  if (contractorId !== null) update.contractor_id = contractorId;
+
+  const customerName = getString(entities, 'customer_name');
+  if (customerName !== null) update.customer_name = customerName;
+
+  const customerPhone = getString(entities, 'customer_phone');
+  if (customerPhone !== null) update.customer_phone = customerPhone;
+
+  const locationText = getString(entities, 'location_text');
+  if (locationText !== null) update.location_text = locationText;
+
+  const jobScope = getString(entities, 'job_scope');
+  if (jobScope !== null) update.job_scope = jobScope;
+
+  const propertySizeType = getString(entities, 'property_size_type');
+  if (propertySizeType !== null) update.property_size_type = propertySizeType;
+
+  const propertyAreaSqft = getNumber(entities, 'property_area_sqft');
+  if (propertyAreaSqft !== null) update.property_area_sqft = propertyAreaSqft;
+
+  const isRepaint = getBoolean(entities, 'is_repaint');
+  if (isRepaint !== null) update.is_repaint = isRepaint;
+
+  const startTiming = getString(entities, 'start_timing');
+  if (startTiming !== null) update.start_timing = startTiming;
+
+  const startDate = getDateFromString(entities, 'start_date');
+  if (startDate !== null) update.start_date = startDate;
+
+  const finishQuality = getString(entities, 'finish_quality');
+  if (finishQuality !== null) update.finish_quality = finishQuality;
+
+  const siteVisitPreference = getString(entities, 'site_visit_preference');
+  if (siteVisitPreference !== null) {
+    update.site_visit_preference = siteVisitPreference;
+  }
+
+  if (Object.keys(update).length === 0) {
+    return;
+  }
+
+  update.updatedAt = now;
+
+  try {
+    await collection.updateOne(
+      { _id: objectId },
+      {
+        $set: update,
+      }
+    );
+    console.log('[mongo] Updated lead', params.leadId);
+  } catch (err) {
+    console.error('[mongo] Failed to update lead:', err);
+  }
+}
+
+/**
+ * Upsert a visit document for the given lead based on entities.
+ * Ensures we always target the same leadId and never touch other leads.
+ */
+export async function upsertVisitFromEntities(params: {
+  leadId: string;
+  entities: LeadEntities;
+}): Promise<void> {
+  const db = await getMongoDb();
+  if (!db) return;
+
+  const objectId = toObjectId(params.leadId);
+  if (!objectId) return;
+
+  const collection = db.collection<VisitDocument>('lead_visits');
+  const { entities } = params;
+  const now = new Date();
+
+  const date = getString(entities, 'date');
+  const time = getString(entities, 'time');
+
+  const update: Partial<VisitDocument> = {
+    updatedAt: now,
+  };
+
+  if (date !== null) update.date = date;
+  if (time !== null) update.time = time;
+
+  try {
+    await collection.updateOne(
+      { leadId: objectId },
+      {
+        $set: update,
+        $setOnInsert: {
+          leadId: objectId,
+          createdAt: now,
+        },
+      },
+      { upsert: true }
+    );
+    console.log('[mongo] Upserted visit for lead', params.leadId);
+  } catch (err) {
+    console.error('[mongo] Failed to upsert visit:', err);
+  }
+}
+
+/**
+ * Upsert a measurement document for the given lead based on entities.
+ * Subsequent LOG_MEASUREMENT steps for the same leadId will update the same
+ * record, avoiding any cross-lead overwrites.
+ */
+export async function upsertMeasurementFromEntities(params: {
+  leadId: string;
+  entities: LeadEntities;
+}): Promise<void> {
+  const db = await getMongoDb();
+  if (!db) return;
+
+  const objectId = toObjectId(params.leadId);
+  if (!objectId) return;
+
+  const collection = db.collection<MeasurementDocument>('lead_measurements');
+  const { entities } = params;
+  const now = new Date();
+
+  const measurementArea = getString(entities, 'measurement_area');
+  const measurements = entities['measurements'];
+  const issues = entities['issues'];
+  const recommendedAddons = entities['recommended_addons'];
+
+  const update: Partial<MeasurementDocument> = {
+    updatedAt: now,
+  };
+
+  if (measurementArea !== null) update.measurement_area = measurementArea;
+  if (measurements !== undefined) update.measurements = measurements;
+  if (issues !== undefined) update.issues = issues;
+  if (recommendedAddons !== undefined) update.recommended_addons = recommendedAddons;
+
+  try {
+    await collection.updateOne(
+      { leadId: objectId },
+      {
+        $set: update,
+        $setOnInsert: {
+          leadId: objectId,
+          createdAt: now,
+        },
+      },
+      { upsert: true }
+    );
+    console.log('[mongo] Upserted measurement for lead', params.leadId);
+  } catch (err) {
+    console.error('[mongo] Failed to upsert measurement:', err);
+  }
 }
 
 /**

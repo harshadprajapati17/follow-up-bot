@@ -53,3 +53,41 @@ export async function uploadVoiceToS3(
     return null;
   }
 }
+
+/**
+ * Uploads a quote PDF buffer to S3 and returns the public URL.
+ * Key will be: quotes/YYYY-MM-DD/<leadId>.pdf
+ */
+export async function uploadQuotePdfToS3(
+  buffer: Buffer,
+  leadId: string
+): Promise<string | null> {
+  const client = getClient();
+  if (!client || !publicBaseUrl) {
+    console.error(
+      '[s3] Missing AWS_REGION, AWS_S3_BUCKET, S3_PUBLIC_BASE_URL or credentials'
+    );
+    return null;
+  }
+
+  const datePrefix = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const key = `quotes/${datePrefix}/${leadId}.pdf`;
+
+  try {
+    await client.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: buffer,
+        ContentType: 'application/pdf',
+      })
+    );
+    const url = `${publicBaseUrl}/${key}`;
+    console.log('[s3] Uploaded quote PDF to', url);
+    return url;
+  } catch (err) {
+    console.error('[s3] Quote PDF upload failed:', err);
+    return null;
+  }
+}
+
