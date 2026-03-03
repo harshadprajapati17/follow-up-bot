@@ -56,7 +56,7 @@ export default function ChatPage() {
       id: 1,
       role: "bot",
       content:
-        "Namaste 👋 Main aapka paint project assistant hoon. Simple Hindi / Hinglish mein bataiye – kis type ka kaam karwana hai?",
+        "Namaste 👋 Main aapka paint project assistant hoon. Aap keh sakte ho – Lead add karo, Visit schedule karo, ya Measurement note karo.",
     },
   ]);
   const [isSending, setIsSending] = useState(false);
