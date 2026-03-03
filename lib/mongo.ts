@@ -106,6 +106,11 @@ export interface VisitDocument {
   updatedAt: Date;
 }
 
+export interface VisitDetails {
+  date: string | null;
+  time: string | null;
+}
+
 export interface MeasurementDocument {
   _id?: ObjectId;
   leadId: ObjectId;
@@ -124,6 +129,13 @@ export interface MeasurementDocument {
   recommended_addons?: unknown;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface MeasurementDetails {
+  measurement_area: string | null;
+  measurements?: unknown;
+  issues?: unknown;
+  recommended_addons?: unknown;
 }
 
 export interface LeadSummary {
@@ -180,6 +192,64 @@ export async function getLeadByIdForUser(params: {
     };
   } catch (err) {
     console.error('[mongo] Failed to fetch lead by id for user:', err);
+    return null;
+  }
+}
+
+/**
+ * Fetch visit schedule (date/time) for a given lead.
+ * Returns null if no visit is found or on error.
+ */
+export async function getVisitForLead(params: {
+  leadId: string;
+}): Promise<VisitDetails | null> {
+  const db = await getMongoDb();
+  if (!db) return null;
+
+  const objectId = toObjectId(params.leadId);
+  if (!objectId) return null;
+
+  try {
+    const collection = db.collection<VisitDocument>('lead_visits');
+    const doc = await collection.findOne({ leadId: objectId });
+    if (!doc) return null;
+
+    return {
+      date: doc.date ?? null,
+      time: doc.time ?? null,
+    };
+  } catch (err) {
+    console.error('[mongo] Failed to fetch visit for lead:', err);
+    return null;
+  }
+}
+
+/**
+ * Fetch measurement / scope details for a given lead.
+ * Returns null if no measurement is found or on error.
+ */
+export async function getMeasurementForLead(params: {
+  leadId: string;
+}): Promise<MeasurementDetails | null> {
+  const db = await getMongoDb();
+  if (!db) return null;
+
+  const objectId = toObjectId(params.leadId);
+  if (!objectId) return null;
+
+  try {
+    const collection = db.collection<MeasurementDocument>('lead_measurements');
+    const doc = await collection.findOne({ leadId: objectId });
+    if (!doc) return null;
+
+    return {
+      measurement_area: doc.measurement_area ?? null,
+      measurements: doc.measurements,
+      issues: doc.issues,
+      recommended_addons: doc.recommended_addons,
+    };
+  } catch (err) {
+    console.error('[mongo] Failed to fetch measurement for lead:', err);
     return null;
   }
 }

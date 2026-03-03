@@ -617,6 +617,35 @@ function handleIntentSwitchFlow(params: {
     topIntent !== session.current_intent &&
     topIntent !== "GREETING"
   ) {
+    // Avoid interrupting an in‑progress NEW_LEAD flow with UPDATE_EXISTING_LEAD
+    // unless the user explicitly talks about updating/changing something.
+    // This prevents simple answers like "15 March se start karna hai" to the
+    // "Kab start karna hai..." question from being treated as an update.
+    if (
+      topIntent === "UPDATE_EXISTING_LEAD" &&
+      session.current_intent === "NEW_LEAD" &&
+      hasOngoingFlow
+    ) {
+      const lower = text.toLowerCase();
+      const explicitUpdateKeywords = [
+        "update",
+        "badal",
+        "change",
+        "reschedule",
+        "date change",
+        "date badal",
+        "slot change",
+      ];
+
+      const hasExplicitUpdateWord = explicitUpdateKeywords.some((kw) =>
+        lower.includes(kw)
+      );
+
+      if (!hasExplicitUpdateWord) {
+        return { kind: "continue", session, entities: {} };
+      }
+    }
+
     session = {
       ...session,
       pending_intent_switch_to: topIntent,
@@ -706,8 +735,28 @@ function validateAndBuildResult(params: {
   entities: Record<string, unknown>;
 }): OrchestratorResult {
   const { session, intents, entities } = params;
+  const topIntent = intents[0];
 
-  const intentForValidation = session.current_intent ?? intents[0];
+  /**
+   * Decide which intent we should validate against.
+   *
+   * Default behaviour: prefer existing session.current_intent when present,
+   * otherwise fall back to the top LLM intent.
+   *
+   * Special case: if the LLM now classifies the message as GREETING and the
+   * previous flow is already complete (no missing fields), treat this turn as
+   * a GREETING-only turn instead of re‑validating the old workflow intent.
+   * This prevents neutral messages like "hey there" from repeatedly marking a
+   * completed NEW_LEAD as "ready" and triggering unnecessary DB writes.
+   */
+  let intentForValidation = session.current_intent ?? topIntent;
+
+  const hasCompletedFlow =
+    session.current_intent !== null && session.missing_fields.length === 0;
+
+  if (topIntent === "GREETING" && hasCompletedFlow) {
+    intentForValidation = "GREETING";
+  }
 
   const mergedEntities: Record<string, unknown> = {
     ...session.entities,
@@ -731,12 +780,14 @@ function validateAndBuildResult(params: {
     start_timing:
       mergedEntities.start_timing ??
       mergedEntities.timing ??
-      mergedEntities.when_start,
+      mergedEntities.when_start ??
+      mergedEntities.start_date,
     finish_quality:
       mergedEntities.finish_quality ??
       mergedEntities.quality ??
       mergedEntities.finish,
   };
+
 
   if (intentForValidation === "LOG_MEASUREMENT") {
     const { issues, recommended_addons } =
@@ -751,7 +802,13 @@ function validateAndBuildResult(params: {
 
   const updatedSession: AnalyzeSessionV1 = {
     ...session,
-    current_intent: session.current_intent ?? intents[0],
+    // If we're treating this turn as a pure GREETING over a completed flow,
+    // explicitly set the current intent to GREETING so downstream logic and
+    // the API layer don't re‑run NEW_LEAD persistence side‑effects.
+    current_intent:
+      intentForValidation === "GREETING"
+        ? "GREETING"
+        : session.current_intent ?? topIntent,
     entities: normalizedEntities,
   };
 
@@ -779,10 +836,25 @@ function validateAndBuildResult(params: {
       value = normalizedEntities[field];
     }
 
-    const isMissing =
+    let isMissing =
       value === undefined ||
       value === null ||
       (typeof value === "string" && value.trim() === "");
+
+    // Special case for LOG_MEASUREMENT: if room-wise areas are present, treat
+    // paintable_area_sqft as satisfied so we don't keep repeating the same
+    // "area ya rooms batao" question. Downstream, the DB layer can either
+    // derive a total from rooms or rely on room-wise data directly.
+    if (
+      isMissing &&
+      intentForValidation === "LOG_MEASUREMENT" &&
+      field === "paintable_area_sqft"
+    ) {
+      const rooms = normalizedEntities["rooms"];
+      if (Array.isArray(rooms) && rooms.length > 0) {
+        isMissing = false;
+      }
+    }
 
     if (isMissing) {
       missing.push(field);

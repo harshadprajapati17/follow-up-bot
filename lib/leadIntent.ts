@@ -45,15 +45,16 @@ User message:
 
 Classify the message into one of these intents:
 - "GREETING"  → pure greetings / pleasantries, like "hi", "hello", "namaste", "good morning", etc.
-- "NEW_LEAD" → user is giving details of a new painting job (location, rooms, repainting, etc.). This should include job details like location, customer name, job type, or scope. If the message is ONLY asking for a quote/estimate without providing new job details, it's likely NOT a new lead.
+- "NEW_LEAD" → user is giving details of a new painting job (location, rooms, repainting, etc.). This should include job details like location, customer name, job type, or scope.
 - "GENERATE_QUOTE_OPTIONS" → user is asking for an estimate / quotation for a job that was already discussed or visited earlier. This includes messages asking for quotes, pricing options (basic/standard/premium), timelines, advance payment details, or any quote-related request where the job context is already established.
 - "UPDATE_EXISTING_LEAD" → user wants to change details of an already captured job (change colour, area, date, etc.).
-- "LOG_MEASUREMENT" → user is dictating site measurement / technical details (BHK, sqft, paintable area, ceilings, coats, putty level, dampness, brand preference) that should be attached to an existing job/lead.
+- "LOG_MEASUREMENT" → user is dictating detailed site measurement / technical details (BHK + sqft / room‑wise sqft, paintable area, ceilings, coats, putty level, dampness, brand preference) that should be attached to an existing job/lead.
 - "GENERAL_QUESTION" → user is asking a generic question (e.g. about rates, paint types, process) not tied clearly to a new or existing lead.
 - "OTHER" → anything else.
 
 Guidance:
-- Prefer "LOG_MEASUREMENT" instead of "NEW_LEAD" when the text looks like measurement / area / putty / dampness / coats / paint brand details and there is no clear statement that this is a completely new job.
+- Treat short property‑type descriptions like "2BHK", "3BHK", "3Bed room, hall kitchen" or similar room/BHK labels as **NEW_LEAD** when they look like part of describing a new job (property type / size / scope), especially if there is no clear reference to an existing job or "measurement" being logged.
+- Prefer "LOG_MEASUREMENT" only when the message clearly looks like technical measurement input for an already‑known site (e.g. detailed sqft breakdowns, coats/putty/dampness discussion, or when the user explicitly asks to log/update "measurement").
 - IMPORTANT: If a message asks for a quote/estimate with specific requirements (e.g., "quote banao", "3 options", "timeline", "advance payment", pricing tiers) but does NOT provide new job details (location, customer name, job type), it should be classified as "GENERATE_QUOTE_OPTIONS", not "NEW_LEAD". Quote requests typically indicate the job context is already established.
 - "NEW_LEAD" should only be used when the user is providing NEW job information (location, customer details, job scope, etc.), not just asking for quotes or estimates.
 

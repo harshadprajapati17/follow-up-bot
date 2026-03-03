@@ -15,6 +15,7 @@ type AnalyzeV1Response =
       entities: Record<string, unknown>;
       quote_pdf_url?: string;
       next_suggested_intents?: string[];
+      message?: string;
     }
   | {
       status: "noop";
@@ -153,17 +154,33 @@ export default function ChatPage() {
         (resp.intent && INTENT_LABELS[resp.intent]) ||
         (resp.intent ? resp.intent : "Flow complete");
 
-      const entitiesSummary =
-        resp.entities && Object.keys(resp.entities).length > 0
-          ? `\n\nCaptured details: ${Object.keys(resp.entities)
-              .slice(0, 6)
-              .join(", ")}${Object.keys(resp.entities).length > 6 ? " +" : ""}.`
-          : "";
+      const shouldShowEntitiesSummary =
+        resp.intent !== "DATA_RETRIEVAL" &&
+        resp.entities &&
+        Object.keys(resp.entities).length > 0;
 
-      let botMessage = `Done ✅  – ${intentLabel} ready ho gaya.${entitiesSummary}`;
+      const entitiesSummary = shouldShowEntitiesSummary
+        ? `\n\nCaptured details: ${Object.keys(resp.entities)
+            .slice(0, 6)
+            .join(", ")}${
+            Object.keys(resp.entities).length > 6 ? " +" : ""
+          }.`
+        : "";
 
-      if (resp.quote_pdf_url) {
-        botMessage += `\n\nEk quote PDF bhi ready hai – niche button se open kar sakte hain.`;
+      let botMessage = "";
+      if (
+        (resp.intent === "GREETING" || resp.intent === "DATA_RETRIEVAL") &&
+        resp.message
+      ) {
+        botMessage = `${resp.message}${
+          resp.intent === "GREETING" ? entitiesSummary : ""
+        }`;
+      } else {
+        botMessage = `Done ✅  – ${intentLabel} ready ho gaya.${entitiesSummary}`;
+
+        if (resp.quote_pdf_url) {
+          botMessage += `\n\nEk quote PDF bhi ready hai – niche button se open kar sakte hain.`;
+        }
       }
 
       pushMessage("bot", botMessage);

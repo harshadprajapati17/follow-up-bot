@@ -10,6 +10,7 @@ import {
   buildAnalyzeV1IntentPrompt,
   buildAnalyzeV1EntitiesPromptForIntent,
   buildGeneralKnowledgeAnswerPrompt,
+  buildCapabilityRouterPrompt,
   INTENTS_WITH_ENTITY_EXTRACTION,
 } from "@/lib/prompts/analyze-v1";
 import {
@@ -20,6 +21,8 @@ import {
   getLeadByIdForUser,
   getRecentLeadsForUser,
   getLeadDetailsForUser,
+  getVisitForLead,
+  getMeasurementForLead,
 } from "@/lib/mongo";
 import { buildQuotePdfBuffer } from "@/lib/quotePdf";
 import { uploadQuotePdfToS3 } from "@/lib/s3";
@@ -43,6 +46,23 @@ function isDontKnow(text: string): boolean {
     "maloom nahi",
   ];
   return patterns.some((p) => lower.includes(p));
+}
+
+function isBothJobScopeAnswer(text: string): boolean {
+  const lower = text.trim().toLowerCase();
+  if (!lower) return false;
+
+  // Common Hinglish/Hindi ways to say "both" when asked interior vs exterior
+  const patterns = [
+    "dono",
+    "dono hi",
+    "both",
+    "interior aur exterior",
+    "interior or exterior dono",
+    "interior and exterior",
+  ];
+
+  return patterns.some((p) => lower === p || lower.includes(p));
 }
 
 /**
@@ -201,7 +221,139 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Step 1: Intent-only classification (small prompt).
+    // Step 0: High-level capability routing (FLOW_START vs DATA_RETRIEVAL, etc.).
+    const capabilityPrompt = buildCapabilityRouterPrompt({
+      session: sessionForFlow,
+      text: textStr,
+    });
+    console.log(
+      "======== [api/analyze-v1] LLM CALL (CAPABILITY): REQUEST ========"
+    );
+    console.log(capabilityPrompt);
+
+    const capabilityParsed = await generateGeminiJson<{ capability?: string }>({
+      prompt: capabilityPrompt,
+    });
+    console.log(
+      "======== [api/analyze-v1] LLM CALL (CAPABILITY): RESPONSE ========"
+    );
+    console.dir(capabilityParsed, { depth: null });
+
+    const capability =
+      typeof capabilityParsed.capability === "string"
+        ? capabilityParsed.capability
+        : null;
+
+    // Fast path: handle pure data-retrieval questions separately so things like
+    // "kab schedule visit hai?" don't get treated as a fresh SCHEDULE_VISIT flow.
+    if (capability === "DATA_RETRIEVAL") {
+      const activeLeadId =
+        sessionForFlow.active_lead_id &&
+        typeof sessionForFlow.active_lead_id === "string"
+          ? sessionForFlow.active_lead_id
+          : null;
+
+      // If we don't know which lead they are talking about, fall back to the
+      // normal flow for now (which might ask them to pick a lead).
+      if (activeLeadId) {
+        let message: string | null = null;
+        let knowledgeLeadDetails: Record<string, unknown> | null = null;
+        let knowledgeVisitDetails: Record<string, unknown> | null = null;
+        let knowledgeMeasurementDetails: Record<string, unknown> | null = null;
+
+        try {
+          const [lead, visit, measurement] = await Promise.all([
+            getLeadDetailsForUser({
+              userId,
+              leadId: activeLeadId,
+            }),
+            getVisitForLead({ leadId: activeLeadId }),
+            getMeasurementForLead({ leadId: activeLeadId }),
+          ]);
+
+          if (lead) {
+            knowledgeLeadDetails = lead as unknown as Record<string, unknown>;
+          }
+
+          if (visit && (visit.date || visit.time)) {
+            knowledgeVisitDetails =
+              visit as unknown as Record<string, unknown>;
+          }
+
+          if (measurement) {
+            knowledgeMeasurementDetails =
+              measurement as unknown as Record<string, unknown>;
+          }
+
+          const knowledgePrompt = buildGeneralKnowledgeAnswerPrompt({
+            userText: textStr,
+            ...(knowledgeLeadDetails ? { lead: knowledgeLeadDetails } : {}),
+            ...(knowledgeVisitDetails ? { visit: knowledgeVisitDetails } : {}),
+            ...(knowledgeMeasurementDetails
+              ? { measurement: knowledgeMeasurementDetails }
+              : {}),
+          });
+
+          const knowledgeParsed = await generateGeminiJson<{
+            message?: string;
+          }>({
+            prompt: knowledgePrompt,
+          });
+
+          if (
+            knowledgeParsed &&
+            typeof knowledgeParsed.message === "string" &&
+            knowledgeParsed.message.trim().length > 0
+          ) {
+            message = knowledgeParsed.message.trim();
+          }
+
+          if (!message) {
+            if (knowledgeMeasurementDetails) {
+              message =
+                "Measurement / scope details nikalte waqt koi clear summary nahi mili, lekin data system mein saved hai.";
+            } else if (knowledgeVisitDetails) {
+              message =
+                "Visit/ schedule details nikalte waqt koi clear summary nahi mili, lekin data system mein saved hai.";
+            } else if (knowledgeLeadDetails) {
+              message =
+                "Lead details nikalte waqt koi clear summary nahi mili, lekin data system mein saved hai.";
+            } else {
+              message =
+                "Is lead ke liye koi additional details nahi mile, lekin agar kuch hoga toh system mein save rahega.";
+            }
+          }
+        } catch (err) {
+          console.error(
+            "[api/analyze-v1] Error while fetching data for DATA_RETRIEVAL:",
+            err
+          );
+          message =
+            "Details nikalte waqt error aaya, thodi der baad phir se try kariye.";
+        }
+
+        console.log("======== [api/analyze-v1] SESSION: WRITE TO REDIS ========");
+        console.dir(
+          {
+            key,
+            session: sessionForFlow,
+          },
+          { depth: null }
+        );
+
+        await redis.set(key, sessionForFlow);
+
+        return NextResponse.json<AnalyzeV1Response>({
+          status: "ready",
+          intent: "DATA_RETRIEVAL",
+          entities: sessionForFlow.entities ?? {},
+          ...(message ? { message } : {}),
+          ...(knowledgeLeadDetails ? { lead_details: knowledgeLeadDetails } : {}),
+        });
+      }
+    }
+
+    // Step 1: Intent-only classification (small prompt) for FLOW_START-like flows.
     const intentPrompt = buildAnalyzeV1IntentPrompt({
       session: sessionForFlow,
       text: textStr,
@@ -234,9 +386,22 @@ export async function POST(req: NextRequest) {
         ? sessionForFlow.current_intent
         : topIntent;
 
+    // Lightweight heuristic: if we are in NEW_LEAD flow, currently asking for
+    // job_scope, and the contractor replies with a short "both" style answer
+    // like "dono", fill job_scope directly without an LLM round-trip.
+    const isAwaitingJobScope =
+      effectiveIntentForEntities === "NEW_LEAD" &&
+      Array.isArray(sessionForFlow.missing_fields) &&
+      sessionForFlow.missing_fields.includes("job_scope");
+
+    if (isAwaitingJobScope && isBothJobScopeAnswer(textStr)) {
+      entities.job_scope = "BOTH";
+    }
+
     if (
       effectiveIntentForEntities &&
-      INTENTS_WITH_ENTITY_EXTRACTION.has(effectiveIntentForEntities)
+      INTENTS_WITH_ENTITY_EXTRACTION.has(effectiveIntentForEntities) &&
+      Object.keys(entities).length === 0
     ) {
       const entityPrompt = buildAnalyzeV1EntitiesPromptForIntent(
         effectiveIntentForEntities,
@@ -515,6 +680,8 @@ export async function POST(req: NextRequest) {
       // general knowledge and the active lead as context when present.
       if (intent === "GREETING") {
         let leadForKnowledge: Record<string, unknown> | undefined;
+        let visitForKnowledge: Record<string, unknown> | undefined;
+        let measurementForKnowledge: Record<string, unknown> | undefined;
 
         const activeLeadId =
           sessionToPersist.active_lead_id &&
@@ -524,17 +691,29 @@ export async function POST(req: NextRequest) {
 
         if (activeLeadId) {
           try {
-            const lead = await getLeadDetailsForUser({
-              userId,
-              leadId: activeLeadId,
-            });
+            const [lead, visit, measurement] = await Promise.all([
+              getLeadDetailsForUser({
+                userId,
+                leadId: activeLeadId,
+              }),
+              getVisitForLead({ leadId: activeLeadId }),
+              getMeasurementForLead({ leadId: activeLeadId }),
+            ]);
             if (lead) {
-              knowledgeLeadDetails = lead as unknown as Record<string, unknown>;
+              knowledgeLeadDetails =
+                lead as unknown as Record<string, unknown>;
               leadForKnowledge = knowledgeLeadDetails;
+            }
+            if (visit && (visit.date || visit.time)) {
+              visitForKnowledge = visit as unknown as Record<string, unknown>;
+            }
+            if (measurement) {
+              measurementForKnowledge =
+                measurement as unknown as Record<string, unknown>;
             }
           } catch (err) {
             console.error(
-              "[api/analyze-v1] Error while fetching lead for general knowledge answer:",
+              "[api/analyze-v1] Error while fetching lead/visit/measurement for general knowledge answer:",
               err
             );
           }
@@ -544,6 +723,8 @@ export async function POST(req: NextRequest) {
           const knowledgePrompt = buildGeneralKnowledgeAnswerPrompt({
             userText: textStr,
             lead: leadForKnowledge,
+            visit: visitForKnowledge,
+            measurement: measurementForKnowledge,
           });
 
           const knowledgeParsed = await generateGeminiJson<{ message?: string }>(
