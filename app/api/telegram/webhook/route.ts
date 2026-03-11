@@ -4,6 +4,7 @@ import { processVoiceMessage } from '@/lib/telegramVoice';
 import { textToSpeech } from '@/lib/tts';
 import { saveProjectConversation } from '@/lib/mongo';
 import { handleProjectConversation } from '@/lib/projectConversation';
+import { toHindiDevanagari } from '@/lib/transliterateToHindi';
 
 /**
  * GET — webhook health check
@@ -74,7 +75,9 @@ export async function POST(request: NextRequest) {
       if (finalReplyText) {
         // Conversation replies: send as voice (TTS). Fallback to text if TTS fails.
         if (replyText !== null) {
-          const audioBuffer = await textToSpeech(finalReplyText, {
+          // Convert to Hindi script for TTS only; Telegram text replies remain Hinglish/English.
+          const ttsText = toHindiDevanagari(finalReplyText);
+          const audioBuffer = await textToSpeech(ttsText, {
             target_language_code: 'hi-IN',
             output_format: 'mp3',
           });

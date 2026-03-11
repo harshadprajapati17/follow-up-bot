@@ -37,6 +37,15 @@ export interface SarvamSttResponse {
  * @param options - Optional language_code, model, mode
  * @returns Transcript text or null on failure
  */
+/** Sarvam allows audio/webm but not audio/webm;codecs=opus — normalize to an allowed type. */
+const ALLOWED_WEBM = 'audio/webm';
+function normalizeMimeForSarvam(mime: string): string {
+  if (mime === 'audio/webm;codecs=opus' || mime.startsWith('audio/webm')) {
+    return ALLOWED_WEBM;
+  }
+  return mime;
+}
+
 export async function transcribeAudio(
   audioBuffer: Buffer,
   mimeType: string = 'audio/ogg',
@@ -49,8 +58,9 @@ export async function transcribeAudio(
     return null;
   }
 
+  const normalizedMime = normalizeMimeForSarvam(mimeType);
   const formData = new FormData();
-  const blob = new Blob([new Uint8Array(audioBuffer)], { type: mimeType });
+  const blob = new Blob([new Uint8Array(audioBuffer)], { type: normalizedMime });
   formData.append('file', blob, filename);
 
   const languageCode = options.language_code ?? 'unknown';

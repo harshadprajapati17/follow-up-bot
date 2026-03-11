@@ -116,6 +116,14 @@ export interface MeasurementDocument {
   leadId: ObjectId;
   measurement_area: string | null;
   measurements?: unknown;
+  /** Whether ceiling is included in painting scope */
+  ceiling_included?: boolean | null;
+  /** Putty/primer detail, e.g. '1 coat putty, 1 coat primer' */
+  prep_level?: string | null;
+  /** Paint brand preference, e.g. 'Asian Paints', 'no preference' */
+  brand_preference?: string | null;
+  /** Finish type: matt, satin, gloss, or texture */
+  finish?: string | null;
   /**
    * Structured list of issues captured during LOG_MEASUREMENT, if any.
    * Shape is controlled at the orchestrator/LLM layer and stored as-is.
@@ -134,6 +142,10 @@ export interface MeasurementDocument {
 export interface MeasurementDetails {
   measurement_area: string | null;
   measurements?: unknown;
+  ceiling_included?: boolean | null;
+  prep_level?: string | null;
+  brand_preference?: string | null;
+  finish?: string | null;
   issues?: unknown;
   recommended_addons?: unknown;
 }
@@ -245,6 +257,10 @@ export async function getMeasurementForLead(params: {
     return {
       measurement_area: doc.measurement_area ?? null,
       measurements: doc.measurements,
+      ceiling_included: doc.ceiling_included ?? null,
+      prep_level: doc.prep_level ?? null,
+      brand_preference: doc.brand_preference ?? null,
+      finish: doc.finish ?? null,
       issues: doc.issues,
       recommended_addons: doc.recommended_addons,
     };
@@ -514,6 +530,10 @@ export async function upsertMeasurementFromEntities(params: {
 
   const measurementArea = getString(entities, 'measurement_area');
   const measurements = entities['measurements'];
+  const ceilingIncluded = getBoolean(entities, 'ceiling_included');
+  const prepLevel = getString(entities, 'prep_level');
+  const brandPreference = getString(entities, 'brand_preference');
+  const finish = getString(entities, 'finish');
   const issues = entities['issues'];
   const recommendedAddons = entities['recommended_addons'];
 
@@ -523,6 +543,10 @@ export async function upsertMeasurementFromEntities(params: {
 
   if (measurementArea !== null) update.measurement_area = measurementArea;
   if (measurements !== undefined) update.measurements = measurements;
+  if (ceilingIncluded !== null) update.ceiling_included = ceilingIncluded;
+  if (prepLevel !== null) update.prep_level = prepLevel;
+  if (brandPreference !== null) update.brand_preference = brandPreference;
+  if (finish !== null) update.finish = finish;
   if (issues !== undefined) update.issues = issues;
   if (recommendedAddons !== undefined) update.recommended_addons = recommendedAddons;
 

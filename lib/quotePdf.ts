@@ -112,12 +112,19 @@ export async function buildQuotePdfBuffer(
 
   const advance = entities['advance'] as
     | { type?: string; value?: unknown }
+    | string
+    | number
     | undefined;
-  const advanceType = advance?.type ? String(advance.type) : '-';
-  const advanceValue =
-    advance && 'value' in advance
-      ? asString((advance as { value?: unknown }).value)
-      : null;
+  const isAdvanceObject =
+    typeof advance === 'object' && advance !== null;
+  const advanceType = isAdvanceObject && advance.type
+    ? String(advance.type)
+    : '-';
+  const advanceValue = isAdvanceObject && 'value' in advance
+    ? asString((advance as { value?: unknown }).value)
+    : (typeof advance === 'string' || typeof advance === 'number'
+        ? asString(advance)
+        : null);
 
   cursorY -= lineGap / 2;
   drawText('Quote Options', { bold: true, size: fontSizeLabel });
