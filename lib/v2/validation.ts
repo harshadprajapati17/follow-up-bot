@@ -6,7 +6,7 @@
  * - We make sure things like phone numbers, enums and required fields look sane.
  * - If something is off, we block or adjust the call instead of touching the database.
  */
-import type { ValidationResult } from "./types";
+import type { ConversationMessage, ValidationResult } from "./types";
 import { getToolByName } from "./gemini-tools";
 
 /** Normalize Indian mobile: 10 digits as-is; 12 digits starting with 91 → last 10. */
@@ -23,7 +23,8 @@ function normalizeIndianPhone(phone: string): string {
  */
 export function validateToolCall(
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  conversation?: ConversationMessage[]
 ): ValidationResult {
   const tool = getToolByName(toolName);
   if (!tool) {
@@ -44,7 +45,7 @@ export function validateToolCall(
   // Route each tool to its own validator; some tools have no extra checks
   switch (toolName) {
     case "save_new_lead":
-      missingFields = validateSaveNewLead(sanitized, errors);
+      missingFields = validateSaveNewLead(sanitized, errors, conversation);
       break;
     case "schedule_visit":
       validateScheduleVisit(sanitized, errors);
@@ -97,10 +98,6 @@ export function extractValidEntitiesFromFailedToolCall(
     const name = String(a.customer_name ?? "").trim();
     if (name) out.customer_name = name;
 
-    const phoneRaw = String(a.customer_phone ?? "").trim();
-    const phone = normalizeIndianPhone(phoneRaw);
-    if (phone && /^\d{10}$/.test(phone)) out.customer_phone = phone;
-
     const loc = String(a.location_text ?? a.customer_location ?? "").trim();
     if (loc) out.location_text = loc;
 
@@ -141,7 +138,8 @@ const SAVE_NEW_LEAD_REQUIRED = [
 // Missing required fields cause validation to fail so extractValidEntitiesFromFailedToolCall can persist what we have.
 function validateSaveNewLead(
   args: Record<string, unknown>,
-  errors: string[]
+  errors: string[],
+  conversation?: ConversationMessage[]
 ): string[] {
   const missing: string[] = [];
   // Require all required fields to be present and non-empty (so partial calls fail and we persist valid fields)
@@ -165,9 +163,27 @@ function validateSaveNewLead(
   const phoneRaw = String(args.customer_phone ?? "").trim();
   const phone = normalizeIndianPhone(phoneRaw);
   if (phoneRaw && !/^\d{10}$/.test(phone)) {
-    errors.push(`customer_phone must be 10 digits (or 91 followed by 10), got: ${phoneRaw}`);
+    errors.push(
+      `customer_phone must be 10 digits (or 91 followed by 10), got: ${phoneRaw}`
+    );
   } else if (phone) {
-    (args as Record<string, unknown>).customer_phone = phone;
+    // Extra safety: only accept phone numbers that actually appeared in the user's messages
+    // to avoid the LLM "completing" or hallucinating digits (e.g. turning "98 98 98 98" into "9898989898").
+    if (conversation && conversation.length > 0) {
+      const userDigits = conversation
+        .filter((m) => m.role === "user")
+        .map((m) => m.content.replace(/\D/g, ""))
+        .join(" ");
+      if (userDigits && !userDigits.includes(phone)) {
+        errors.push(
+          `customer_phone did not match any 10-digit sequence spoken by the user, got: ${phone}`
+        );
+      } else {
+        (args as Record<string, unknown>).customer_phone = phone;
+      }
+    } else {
+      (args as Record<string, unknown>).customer_phone = phone;
+    }
   }
 
   const name = String(args.customer_name ?? "").trim();

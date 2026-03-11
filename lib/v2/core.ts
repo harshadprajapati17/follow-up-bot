@@ -423,7 +423,7 @@ export async function handleChatV2(params: {
 
     // Validate: are the tool arguments correct? (e.g. phone format, required fields)
     const validationStart = Date.now();
-    const validation = validateToolCall(tc.name, tc.args);
+    const validation = validateToolCall(tc.name, tc.args, conv.messages);
     const validationDuration = Date.now() - validationStart;
     validationPassed = validation.valid;
     validationErrors = validation.errors;
