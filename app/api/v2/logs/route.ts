@@ -11,6 +11,7 @@
  *   requestId — fetch a single log by its request_id
  */
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { fetchV2Logs, fetchV2LogById } from "@/lib/v2/logger";
