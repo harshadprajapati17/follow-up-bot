@@ -64,12 +64,17 @@ function buildSaveNewLeadValidationFailureMessage(
   if (validEntities.location_text) {
     parts.push("लोकेशन नोट कर ली है।");
   }
-  const nextField = pendingFields[0];
-  const nextPrompt = nextField ? NEXT_FIELD_PROMPT[nextField] : null;
-  parts.push(
-    nextPrompt ??
-      "कृपया ग्राहक का नाम और लोकेशन (एरिया / शहर) बता दीजिए।"
-  );
+  if (pendingFields.length === 0) {
+    parts.push(
+      "जो details मिली हैं वो सेव हो गई हैं। अब आप अगला काम चुन सकते हैं — जैसे विज़िट शेड्यूल करना।"
+    );
+  } else {
+    const nextField = pendingFields[0];
+    const nextPrompt = nextField ? NEXT_FIELD_PROMPT[nextField] : null;
+    if (nextPrompt) {
+      parts.push(nextPrompt);
+    }
+  }
   return parts.join(" ");
 }
 
