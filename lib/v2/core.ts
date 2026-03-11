@@ -91,6 +91,42 @@ function estimateTokensSaved(conversationLength: number): number {
   );
 }
 
+function sanitizeGeminiText(raw: string | null): string {
+  if (!raw) return "";
+  const text = raw;
+  const metaHints = [
+    "सोच रहा हूँ कि टूल",
+    "soch raha hoon ki tool",
+    "tool `save_new_lead`",
+    "tool `schedule_visit`",
+    "tool `log_measurement`",
+    "tool `generate_quote`",
+    "tool `update_lead`",
+    "tool `get_lead_details`",
+    "tool `list_recent_leads`",
+    "functionCall",
+    "function call",
+  ];
+
+  if (!metaHints.some((p) => text.includes(p))) {
+    return text;
+  }
+
+  const cleaned = text
+    .split("\n")
+    .filter(
+      (line) =>
+        !line.includes("tool `") &&
+        !line.includes("टूल") &&
+        !line.includes("functionCall") &&
+        !line.includes("function call")
+    )
+    .join("\n")
+    .trim();
+
+  return cleaned;
+}
+
 /**
  * Main entry point — called by /api/v2/chat and /api/v2/chat-no-cache.
  * Returns the bot's reply + which layer handled it + optional tool result.
@@ -369,7 +405,7 @@ export async function handleChatV2(params: {
   // We validate the args (e.g. phone must be 10 digits), then execute against DB.
   // If Gemini sent text only → both steps are skipped.
   // =====================================================================
-  let responseText = geminiResponse.text ?? "";
+  let responseText = sanitizeGeminiText(geminiResponse.text ?? "");
   let toolExecuted: string | undefined;
   let toolResult: ReturnType<typeof executeToolCall> extends Promise<infer R> ? R : never;
   let validationPassed = true;
