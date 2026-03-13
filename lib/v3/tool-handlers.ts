@@ -183,7 +183,7 @@ async function handleGenerateQuote(
       };
     }
 
-    const leadRecord = lead as Record<string, unknown>;
+    const leadRecord = lead;
 
     // Missing measurement means area is unknown — Gemini should ask for it
     if (!measurement || !measurement.measurement_area) {

@@ -91,6 +91,8 @@ export interface LeadDocument {
   is_repaint: boolean | null;
   start_timing: string | null;
   start_date: Date | null;
+  /** Brand preference captured at lead level (e.g. Asian Paints, Berger) */
+  brand_preference?: string | null;
   finish_quality: string | null;
   site_visit_preference: string | null;
   createdAt: Date;
@@ -383,6 +385,7 @@ export async function createLeadFromEntities(params: {
     property_size_type: getString(entities, 'property_size_type'),
     property_area_sqft: getNumber(entities, 'property_area_sqft'),
     is_repaint: getBoolean(entities, 'is_repaint'),
+    brand_preference: getString(entities, 'brand_preference'),
     start_timing: getString(entities, 'start_timing'),
     start_date: getDateFromString(entities, 'start_date'),
     finish_quality: getString(entities, 'finish_quality'),
