@@ -10,7 +10,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { textToSpeech } from '@/lib/tts';
-import { toHindiDevanagari } from '@/lib/transliterateToHindi';
 
 /** Max length Sarvam TTS accepts for a single request. */
 const MAX_TEXT_LENGTH = 2500;
@@ -106,15 +105,7 @@ export async function POST(request: NextRequest) {
       output_format = 'mp3',
     } = body;
 
-    // Convert outgoing bot text to Hindi script only for TTS, keeping the original
-    // Hinglish/English text for on-screen chat. Log a short sample so we can inspect it.
-    const ttsText = toHindiDevanagari(text);
-    const sampleIn = text.length > 120 ? `${text.slice(0, 120)}…` : text;
-    const sampleOut = ttsText.length > 120 ? `${ttsText.slice(0, 120)}…` : ttsText;
-    // eslint-disable-next-line no-console
-    console.log('[api/tts] payload transliteration:', { in: sampleIn, out: sampleOut });
-
-    const audioBuffer = await textToSpeech(ttsText, {
+    const audioBuffer = await textToSpeech(text, {
       target_language_code,
       speaker,
       model,

@@ -68,6 +68,8 @@ export interface LocalResolverResult {
   session_update?: Partial<SessionV2>;
   /** Entity extracted locally (e.g. phone number, "dono" → job_scope) */
   entity_update?: Record<string, unknown>;
+  /** When true, core.ts should advance to the next enrichment step instead of using response */
+  advance_enrichment?: boolean;
 }
 
 // We didn't handle it — pass through to the next layer (cache or AI).
@@ -100,6 +102,13 @@ export interface GeminiResponse {
 // Tool handler result (after executing a tool call against MongoDB)
 // ---------------------------------------------------------------------------
 
+// A chip shown to the user for quick selection (e.g. brand, scope, putty coats).
+export interface SelectionChip {
+  label: string;
+  /** The value sent back to the API when user taps this chip. */
+  payload: string;
+}
+
 // Result of running a tool: success/fail, message, and optional data or next steps.
 export interface ToolHandlerResult {
   success: boolean;
@@ -113,6 +122,13 @@ export interface ToolHandlerResult {
   next_suggested_intents?: string[];
   /** Quote PDF URL, if generated. */
   quote_pdf_url?: string;
+  /**
+   * Selection chips: user MUST pick one of these options.
+   * chips_type "selection" = required choice (brand, scope, putty coats, etc.)
+   * chips_type "suggestion" = optional shortcuts
+   */
+  selection_chips?: SelectionChip[];
+  chips_type?: "selection" | "suggestion";
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +157,9 @@ export type ChatV2Response =
       tool_executed?: string;
       tool_result?: ToolHandlerResult;
       layer_hit: "local" | "semantic_cache" | "gemini";
+      /** Selection chips for the next question (e.g. brand, scope, putty coats). */
+      selection_chips?: SelectionChip[];
+      chips_type?: "selection" | "suggestion";
     }
   | {
       status: "error";

@@ -105,8 +105,9 @@ export async function findFingerprintMatch(
   text: string,
   session: SessionV2
 ): Promise<FingerprintOutcome> {
-  // Skip lookup if user is mid-flow — their message is probably an answer, not a new intent.
-  if (session.current_flow && session.pending_fields.length > 0) {
+  // Skip lookup if user is mid-flow — their message is an answer, not a new intent.
+  // Also covers "update_lead" enrichment flow (asking location/scope/size after lead is saved).
+  if (session.current_flow) {
     return MISS;
   }
 

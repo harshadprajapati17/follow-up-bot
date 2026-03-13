@@ -122,77 +122,62 @@ export function extractValidEntitiesFromFailedToolCall(
 // Per-tool validators
 // ---------------------------------------------------------------------------
 
-// Required fields for save_new_lead; partial calls fail so we can persist valid entities.
-const SAVE_NEW_LEAD_REQUIRED = [
-  "customer_name",
-  "customer_phone",
-  "location_text",
-  "job_scope",
-  "property_size_type",
-  "is_repaint",
-  "start_timing",
-  "finish_quality",
-] as const;
-
-// Ensures new lead has valid phone (10 digits), name, and allowed values for scope/size/quality.
-// Missing required fields cause validation to fail so extractValidEntitiesFromFailedToolCall can persist what we have.
+// Only name + phone are required to create a lead; everything else is optional and collected later.
 function validateSaveNewLead(
   args: Record<string, unknown>,
   errors: string[],
   conversation?: ConversationMessage[]
 ): string[] {
   const missing: string[] = [];
-  // Require all required fields to be present and non-empty (so partial calls fail and we persist valid fields)
-  for (const key of SAVE_NEW_LEAD_REQUIRED) {
-    const v = args[key];
-    if (key === "is_repaint") {
-      if (v !== true && v !== false) {
-        errors.push(`${key} is required (true or false)`);
-        missing.push(key);
-      }
-    } else {
-      const s = String(v ?? "").trim();
-      if (!s) {
-        errors.push(`${key} is required`);
-        missing.push(key);
-      }
-    }
+
+  // Name is required
+  const name = String(args.customer_name ?? "").trim();
+  if (!name) {
+    errors.push("customer_name is required");
+    missing.push("customer_name");
   }
 
   // Phone: 10 digits or 12 starting with 91; normalize to 10 for storage
   const phoneRaw = String(args.customer_phone ?? "").trim();
-  const phone = normalizeIndianPhone(phoneRaw);
-  if (phoneRaw && !/^\d{10}$/.test(phone)) {
-    errors.push(
-      `customer_phone must be 10 digits (or 91 followed by 10), got: ${phoneRaw}`
-    );
-  } else if (phone) {
-    // Extra safety: only accept phone numbers that actually appeared in the user's messages
-    // to avoid the LLM "completing" or hallucinating digits (e.g. turning "98 98 98 98" into "9898989898").
-    if (conversation && conversation.length > 0) {
-      const userDigits = conversation
-        .filter((m) => m.role === "user")
-        .map((m) => m.content.replace(/\D/g, ""))
-        .join(" ");
-      if (userDigits && !userDigits.includes(phone)) {
-        errors.push(
-          `customer_phone did not match any 10-digit sequence spoken by the user, got: ${phone}`
-        );
-      } else {
-        (args as Record<string, unknown>).customer_phone = phone;
-      }
+  if (!phoneRaw) {
+    errors.push("customer_phone is required");
+    missing.push("customer_phone");
+  } else {
+    const phone = normalizeIndianPhone(phoneRaw);
+    if (!/^\d{10}$/.test(phone)) {
+      errors.push(
+        `customer_phone must be 10 digits (or 91 followed by 10), got: ${phoneRaw}`
+      );
+      missing.push("customer_phone");
     } else {
-      (args as Record<string, unknown>).customer_phone = phone;
+      // Extra safety: only accept phones that actually appeared in user messages
+      if (conversation && conversation.length > 0) {
+        const userDigits = conversation
+          .filter((m) => m.role === "user")
+          .map((m) => m.content.replace(/\D/g, ""))
+          .join(" ");
+        if (userDigits && !userDigits.includes(phone)) {
+          errors.push(
+            `customer_phone did not match any 10-digit sequence spoken by the user, got: ${phone}`
+          );
+          missing.push("customer_phone");
+        } else {
+          args.customer_phone = phone;
+        }
+      } else {
+        args.customer_phone = phone;
+      }
     }
   }
 
-  const name = String(args.customer_name ?? "").trim();
-  if (name === "" && !errors.some((e) => e.includes("customer_name"))) {
-    errors.push("customer_name is empty");
-    if (!missing.includes("customer_name")) missing.push("customer_name");
+  // Location is required
+  const location = String(args.location_text ?? "").trim();
+  if (!location) {
+    errors.push("location_text is required");
+    missing.push("location_text");
   }
 
-  // Job scope must be one of: INTERIOR, EXTERIOR, or BOTH (case-insensitive)
+  // Optional field normalization (no error if missing)
   const scope = String(args.job_scope ?? "").toUpperCase();
   if (scope && !["INTERIOR", "EXTERIOR", "BOTH"].includes(scope)) {
     errors.push(`Invalid job_scope: ${scope}`);
@@ -200,7 +185,6 @@ function validateSaveNewLead(
     args.job_scope = scope;
   }
 
-  // Property size must be 1BHK, 2BHK, 3BHK, or OTHER
   const size = String(args.property_size_type ?? "").toUpperCase();
   if (size && !["1BHK", "2BHK", "3BHK", "OTHER"].includes(size)) {
     errors.push(`Invalid property_size_type: ${size}`);
@@ -208,7 +192,6 @@ function validateSaveNewLead(
     args.property_size_type = size;
   }
 
-  // Finish quality must be BASIC or PREMIUM
   const quality = String(args.finish_quality ?? "").toUpperCase();
   if (quality && !["BASIC", "PREMIUM"].includes(quality)) {
     errors.push(`Invalid finish_quality: ${quality}`);

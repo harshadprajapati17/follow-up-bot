@@ -21,20 +21,29 @@ type AnalyzeV1Response =
       status: "noop";
     };
 
+type SelectionChip = {
+  label: string;
+  payload: string;
+};
+
 type V2Response = {
   status: "success" | "error";
   message: string;
   layer_hit?: "local" | "semantic_cache" | "gemini";
   tool_executed?: string;
+  /** Top-level quote URL — used by v3 responses */
+  quote_pdf_url?: string;
   tool_result?: {
     success: boolean;
     message: string;
     quote_pdf_url?: string;
     next_suggested_intents?: string[];
   };
+  selection_chips?: SelectionChip[];
+  chips_type?: "selection" | "suggestion";
 };
 
-type ApiVersion = "v1" | "v2" | "v2-no-cache";
+type ApiVersion = "v1" | "v2" | "v2-no-cache" | "v3";
 
 type ChatRole = "user" | "bot";
 
@@ -49,6 +58,7 @@ type SuggestionChip = {
   id: string;
   label: string;
   payload: string;
+  chipType?: "selection" | "suggestion";
 };
 
 const INTENT_LABELS: Record<string, string> = {
@@ -69,17 +79,19 @@ const API_ENDPOINTS: Record<ApiVersion, string> = {
   v1: "/api/analyze-v1",
   v2: "/api/v2/chat",
   "v2-no-cache": "/api/v2/chat-no-cache",
+  v3: "/api/v3/chat",
 };
 
 const API_LABELS: Record<ApiVersion, string> = {
   v1: "V1 (Analyze)",
   v2: "V2 (Cached)",
   "v2-no-cache": "V2 (No Cache)",
+  v3: "V3 (Gemini Chat)",
 };
 
 export default function ChatPage() {
   const [input, setInput] = useState("");
-  const [apiVersion, setApiVersion] = useState<ApiVersion>("v2");
+  const [apiVersion, setApiVersion] = useState<ApiVersion>("v3");
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 1,
@@ -91,6 +103,7 @@ export default function ChatPage() {
   const [isSending, setIsSending] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [v3VoiceEnabled, setV3VoiceEnabled] = useState(true);
   const [suggestions, setSuggestions] = useState<SuggestionChip[]>([]);
   const [counter, setCounter] = useState(2);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -117,6 +130,16 @@ export default function ChatPage() {
     window.localStorage.setItem(key, generated);
     return generated;
   }, []);
+
+  // Fetch V3 voice config
+  useEffect(() => {
+    fetch("/api/v3/config")
+      .then((r) => r.json())
+      .then((d: { voiceEnabled?: boolean }) => setV3VoiceEnabled(d.voiceEnabled !== false))
+      .catch(() => setV3VoiceEnabled(true));
+  }, []);
+
+  const showVoiceButton = apiVersion !== "v3" || v3VoiceEnabled;
 
   useEffect(() => {
     if (!scrollRef.current) return;
@@ -229,20 +252,43 @@ export default function ChatPage() {
     const toolTag = resp.tool_executed ? ` · ${resp.tool_executed}` : "";
     const meta = `${layerTag}${toolTag}`;
 
-    const botMsgId = pushMessage("bot", resp.message, meta);
+    // Prefer top-level quote_pdf_url (v3) over nested tool_result (v2)
+    const quotePdfUrl = resp.quote_pdf_url ?? resp.tool_result?.quote_pdf_url;
+
+    // Append a PDF notice to the bot message so the URL is visible in chat
+    const displayMessage = quotePdfUrl
+      ? `${resp.message}\n\n📄 Quote PDF ready hai — नीचे button से open करें।`
+      : resp.message;
+
+    const botMsgId = pushMessage("bot", displayMessage, meta);
     void fetchAndSetBotAudio(botMsgId, resp.message);
 
     const chips: SuggestionChip[] = [];
 
-    if (resp.tool_result?.quote_pdf_url) {
+    // Selection chips from tool result (brand, scope, putty coats, etc.)
+    if (resp.selection_chips && resp.selection_chips.length > 0) {
+      for (const chip of resp.selection_chips) {
+        chips.push({
+          id: `sel-${chip.payload}-${Date.now()}`,
+          label: chip.label,
+          payload: chip.payload,
+          chipType: resp.chips_type ?? "selection",
+        });
+      }
+    }
+
+    // Quote PDF chip — works for both v3 (top-level) and v2 (nested)
+    if (quotePdfUrl) {
       chips.push({
         id: "open-quote-pdf",
-        label: "Quote PDF dekho",
-        payload: resp.tool_result.quote_pdf_url,
+        label: "📄 Quote PDF देखें",
+        payload: quotePdfUrl,
+        chipType: "suggestion",
       });
     }
 
-    if (resp.tool_result?.next_suggested_intents) {
+    // Fallback: next intent suggestions (only if no selection chips)
+    if (chips.length === 0 && resp.tool_result?.next_suggested_intents) {
       for (const intent of resp.tool_result.next_suggested_intents) {
         const label = INTENT_LABELS[intent] ?? intent;
         const utterance = INTENT_UTTERANCES[intent] ?? label;
@@ -250,6 +296,7 @@ export default function ChatPage() {
           id: `next-${intent}-${Date.now()}`,
           label,
           payload: utterance,
+          chipType: "suggestion",
         });
       }
     }
@@ -451,6 +498,7 @@ export default function ChatPage() {
   }
 
   async function fetchAndSetBotAudio(messageId: number, text: string) {
+    if (!showVoiceButton) return;
     if (!text.trim()) return;
     try {
       const res = await fetch("/api/tts", {
@@ -567,6 +615,15 @@ export default function ChatPage() {
               >
                 Logs
               </a>
+              <a
+                href="/pricing"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setIsMenuOpen(false)}
+                className="flex w-full items-center rounded-lg px-3 py-1.5 text-[11px] font-medium text-slate-200 transition hover:bg-slate-800/80"
+              >
+                Pricing Settings
+              </a>
             </div>
           </div>
         )}
@@ -634,18 +691,36 @@ export default function ChatPage() {
         {suggestions.length > 0 && (
           <div className="shrink-0 border-t border-slate-800/80 bg-slate-900/80 px-4 py-2.5 md:px-6">
             <div className="flex flex-wrap gap-2">
-              {suggestions.map((chip) => (
-                <button
-                  key={chip.id}
-                  type="button"
-                  onClick={() => void handleChipClick(chip)}
-                  className="group inline-flex items-center gap-1 rounded-full border border-sky-500/40 bg-sky-500/5 px-3 py-1 text-[11px] font-medium text-sky-200 shadow-sm transition hover:border-sky-300 hover:bg-sky-500/15 hover:text-sky-50 md:text-xs"
-                >
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-400 group-hover:bg-sky-300" />
-                  <span>{chip.label}</span>
-                </button>
-              ))}
+              {suggestions.map((chip) =>
+                chip.chipType === "selection" ? (
+                  // Selection chip — prominent, user must pick one
+                  <button
+                    key={chip.id}
+                    type="button"
+                    onClick={() => void handleChipClick(chip)}
+                    className="group inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/50 bg-emerald-500/10 px-4 py-1.5 text-[12px] font-semibold text-emerald-200 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-500/20 hover:text-emerald-50 md:text-sm"
+                  >
+                    <span>{chip.label}</span>
+                  </button>
+                ) : (
+                  // Suggestion chip — subtle, optional action
+                  <button
+                    key={chip.id}
+                    type="button"
+                    onClick={() => void handleChipClick(chip)}
+                    className="group inline-flex items-center gap-1 rounded-full border border-sky-500/40 bg-sky-500/5 px-3 py-1 text-[11px] font-medium text-sky-200 shadow-sm transition hover:border-sky-300 hover:bg-sky-500/15 hover:text-sky-50 md:text-xs"
+                  >
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-400 group-hover:bg-sky-300" />
+                    <span>{chip.label}</span>
+                  </button>
+                )
+              )}
             </div>
+            {suggestions.some((c) => c.chipType === "selection") && (
+              <p className="mt-1.5 text-[12px] text-slate-500">
+                Ya type / bol ke bhi jawab de sakte ho
+              </p>
+            )}
           </div>
         )}
 
@@ -655,28 +730,30 @@ export default function ChatPage() {
           className="shrink-0 border-t border-slate-800/80 bg-slate-900/90 px-3 py-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom))] md:px-5 md:py-3 md:pb-3"
         >
           <div className="flex items-center gap-2 md:gap-3">
-            <button
-              type="button"
-              onClick={toggleRecording}
-              disabled={isSending}
-              title={isRecording ? "Stop & send voice" : "Record voice"}
-              className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition md:h-10 md:w-10 ${
-                isRecording
-                  ? "border-red-400/80 bg-red-500/20 text-red-300"
-                  : "border-slate-600/80 bg-slate-800/80 text-slate-300 hover:border-sky-400/60 hover:bg-slate-700/80 hover:text-sky-200"
-              }`}
-            >
-              {isRecording ? (
-                <span className="h-3 w-3 rounded-full bg-red-400 animate-pulse" />
-              ) : isTranscribing ? (
-                <span className="text-xs">…</span>
-              ) : (
-                <svg className="h-4 w-4 md:h-5 md:w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
-                  <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
-                </svg>
-              )}
-            </button>
+            {showVoiceButton && (
+              <button
+                type="button"
+                onClick={toggleRecording}
+                disabled={isSending}
+                title={isRecording ? "Stop & send voice" : "Record voice"}
+                className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition md:h-10 md:w-10 ${
+                  isRecording
+                    ? "border-red-400/80 bg-red-500/20 text-red-300"
+                    : "border-slate-600/80 bg-slate-800/80 text-slate-300 hover:border-sky-400/60 hover:bg-slate-700/80 hover:text-sky-200"
+                }`}
+              >
+                {isRecording ? (
+                  <span className="h-3 w-3 rounded-full bg-red-400 animate-pulse" />
+                ) : isTranscribing ? (
+                  <span className="text-xs">…</span>
+                ) : (
+                  <svg className="h-4 w-4 md:h-5 md:w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+                    <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+                    <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+                  </svg>
+                )}
+              </button>
+            )}
             <input
               ref={inputRef}
               type="text"

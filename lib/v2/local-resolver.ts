@@ -11,6 +11,12 @@ import type { SessionV2, LocalResolverOutcome } from "./types";
 
 const SKIP: LocalResolverOutcome = { handled: false };
 
+const SKIP_PHRASES = new Set([
+  "skip", "skip karo", "skip karna", "baad mein", "baad me", "chhodiye",
+  "chhodo", "chodo", "rehne do", "rehne doh", "no", "nahi", "nope", "next",
+]);
+
+
 /**
  * Layer 0: Cheap local resolution for predictable patterns.
  * Handles ~20‑30% of messages with zero LLM cost and <5ms latency.
@@ -22,11 +28,22 @@ export function tryLocalResolve(
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
 
-  if (isGreeting(lower)) {
+  // Don't intercept greetings mid-flow — user may be saying "hi Harshad" (a name)
+  // or "hi 9876543210" (a phone). Let Gemini handle it with full context.
+  if (!session.current_flow && isGreeting(lower)) {
     return {
       handled: true,
       response:
         "नमस्ते! मैं आपका पेंटिंग असिस्टेंट हूँ — नया लीड जोड़ना हो, विज़िट शेड्यूल करनी हो, मेज़रमेंट लॉग करना हो या कोट बनवाना हो तो बताइए।",
+    };
+  }
+
+  // Skip chip during enrichment — advance to next question without updating the field.
+  if (session.current_flow === "update_lead" && SKIP_PHRASES.has(lower.trim())) {
+    return {
+      handled: true,
+      response: "",        // core.ts will replace this with the next enrichment question
+      advance_enrichment: true,
     };
   }
 
@@ -38,15 +55,16 @@ export function tryLocalResolve(
       : digitsOnly.length === 12 && digitsOnly.startsWith("91")
         ? digitsOnly.slice(-10)
         : null;
-  if (
-    session.pending_fields.includes("customer_phone") &&
-    tenDigit !== null
-  ) {
-    return {
-      handled: true,
-      response: `Phone number ${tenDigit} note kar liya.`,
-      entity_update: { customer_phone: tenDigit },
-    };
+  if (tenDigit !== null) {
+    // During save_new_lead flow, let Gemini handle the phone so it can call
+    // save_new_lead with all collected fields (name + phone) at once.
+    if (session.current_flow === "save_new_lead") {
+      return SKIP;
+    }
+
+    // In all other cases let Gemini handle the phone number — it has full conversation
+    // history and session context (collected_entities) to call save_new_lead properly
+    // with all known fields at once, rather than just acknowledging and stalling.
   }
 
   // Lead ID: 24-character hex string.

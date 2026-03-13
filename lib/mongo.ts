@@ -118,6 +118,14 @@ export interface MeasurementDocument {
   measurements?: unknown;
   /** Whether ceiling is included in painting scope */
   ceiling_included?: boolean | null;
+  /** Number of putty coats (0, 1, or 2) */
+  putty_coats?: number | null;
+  /** Whether primer is included */
+  primer_included?: boolean | null;
+  /** Whether old paint scraping is required */
+  scrape_required?: boolean | null;
+  /** Damp/seepage issue description, or 'none' */
+  damp_issue?: string | null;
   /** Putty/primer detail, e.g. '1 coat putty, 1 coat primer' */
   prep_level?: string | null;
   /** Paint brand preference, e.g. 'Asian Paints', 'no preference' */
@@ -143,6 +151,10 @@ export interface MeasurementDetails {
   measurement_area: string | null;
   measurements?: unknown;
   ceiling_included?: boolean | null;
+  putty_coats?: number | null;
+  primer_included?: boolean | null;
+  scrape_required?: boolean | null;
+  damp_issue?: string | null;
   prep_level?: string | null;
   brand_preference?: string | null;
   finish?: string | null;
@@ -258,6 +270,10 @@ export async function getMeasurementForLead(params: {
       measurement_area: doc.measurement_area ?? null,
       measurements: doc.measurements,
       ceiling_included: doc.ceiling_included ?? null,
+      putty_coats: doc.putty_coats ?? null,
+      primer_included: doc.primer_included ?? null,
+      scrape_required: doc.scrape_required ?? null,
+      damp_issue: doc.damp_issue ?? null,
       prep_level: doc.prep_level ?? null,
       brand_preference: doc.brand_preference ?? null,
       finish: doc.finish ?? null,
@@ -531,6 +547,10 @@ export async function upsertMeasurementFromEntities(params: {
   const measurementArea = getString(entities, 'measurement_area');
   const measurements = entities['measurements'];
   const ceilingIncluded = getBoolean(entities, 'ceiling_included');
+  const puttyCoats = getNumber(entities, 'putty_coats');
+  const primerIncluded = getBoolean(entities, 'primer_included');
+  const scrapeRequired = getBoolean(entities, 'scrape_required');
+  const dampIssue = getString(entities, 'damp_issue');
   const prepLevel = getString(entities, 'prep_level');
   const brandPreference = getString(entities, 'brand_preference');
   const finish = getString(entities, 'finish');
@@ -544,6 +564,10 @@ export async function upsertMeasurementFromEntities(params: {
   if (measurementArea !== null) update.measurement_area = measurementArea;
   if (measurements !== undefined) update.measurements = measurements;
   if (ceilingIncluded !== null) update.ceiling_included = ceilingIncluded;
+  if (puttyCoats !== null) update.putty_coats = puttyCoats;
+  if (primerIncluded !== null) update.primer_included = primerIncluded;
+  if (scrapeRequired !== null) update.scrape_required = scrapeRequired;
+  if (dampIssue !== null) update.damp_issue = dampIssue;
   if (prepLevel !== null) update.prep_level = prepLevel;
   if (brandPreference !== null) update.brand_preference = brandPreference;
   if (finish !== null) update.finish = finish;

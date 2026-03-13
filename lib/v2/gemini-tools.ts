@@ -83,16 +83,7 @@ const saveNewLead: FunctionDeclaration = {
         description: "Preferred visit time: morning, evening, anytime (optional)",
       },
     },
-    required: [
-      "customer_name",
-      "customer_phone",
-      "location_text",
-      "job_scope",
-      "property_size_type",
-      "is_repaint",
-      "start_timing",
-      "finish_quality",
-    ],
+    required: ["customer_name", "customer_phone", "location_text"],
   },
 };
 
@@ -135,19 +126,31 @@ const logMeasurement: FunctionDeclaration = {
       },
       paintable_area_sqft: {
         type: Type.STRING,
-        description: "Total paintable area in sqft or room-wise description",
+        description: "Total paintable area in sqft, e.g. '1200', '800 sqft'",
       },
       ceiling_included: {
         type: Type.BOOLEAN,
         description: "Whether ceiling is included in painting scope",
       },
-      prep_level: {
-        type: Type.STRING,
-        description: "Putty/primer detail, e.g. '1 coat putty, 1 coat primer'",
+      putty_coats: {
+        type: Type.NUMBER,
+        description: "Number of putty coats: 0 (none), 1, or 2",
+      },
+      primer_included: {
+        type: Type.BOOLEAN,
+        description: "Whether primer coat is included",
+      },
+      scrape_required: {
+        type: Type.BOOLEAN,
+        description: "Whether full old-paint scraping is required",
       },
       brand_preference: {
         type: Type.STRING,
-        description: "Paint brand preference, e.g. 'Asian Paints', 'no preference'",
+        description: "Paint brand: 'Asian Paints', 'Berger', 'Nerolac', or 'no preference'",
+      },
+      finish_quality: {
+        type: Type.STRING,
+        description: "Quality tier: BASIC, STANDARD, or PREMIUM",
       },
       finish: {
         type: Type.STRING,
@@ -156,10 +159,6 @@ const logMeasurement: FunctionDeclaration = {
       damp_issue: {
         type: Type.STRING,
         description: "Dampness/cracks info if any, or 'none'",
-      },
-      scrape_required: {
-        type: Type.BOOLEAN,
-        description: "Whether full old-paint scraping is required",
       },
       rooms: {
         type: Type.STRING,
@@ -170,21 +169,14 @@ const logMeasurement: FunctionDeclaration = {
         description: "Any wall issues described by contractor (optional)",
       },
     },
-    required: [
-      "lead_id",
-      "paintable_area_sqft",
-      "ceiling_included",
-      "prep_level",
-      "brand_preference",
-      "finish",
-    ],
+    required: ["lead_id", "paintable_area_sqft"],
   },
 };
 
-// Action: Create a quote PDF for a lead (labour-only or labour+material, rate band, timeline).
+// Action: Create a quote PDF for a lead — the calculator uses measurement data from session/DB.
 const generateQuote: FunctionDeclaration = {
   name: "generate_quote",
-  description: "Generate quote options PDF for a lead.",
+  description: "Generate a priced quote PDF for a lead using the logged measurement data.",
   parameters: {
     type: Type.OBJECT,
     properties: {
@@ -196,10 +188,6 @@ const generateQuote: FunctionDeclaration = {
         type: Type.STRING,
         description: "LABOUR_ONLY or LABOUR_PLUS_MATERIAL",
       },
-      rate_band: {
-        type: Type.STRING,
-        description: "BASIC, STANDARD, or PREMIUM",
-      },
       timeline_days: {
         type: Type.STRING,
         description: "Estimated days to complete, e.g. '7 din', '10-12 din'",
@@ -209,7 +197,7 @@ const generateQuote: FunctionDeclaration = {
         description: "Advance amount or percentage, e.g. '30%', '20000'",
       },
     },
-    required: ["lead_id", "quote_type", "rate_band", "timeline_days", "advance"],
+    required: ["lead_id", "quote_type", "timeline_days", "advance"],
   },
 };
 
@@ -303,7 +291,7 @@ export function buildContentsFromHistory(
   // Build a short summary of the session: active lead, current flow, what’s collected, what’s still needed.
   const contextBlock: string[] = [];
   if (sessionContext.active_lead_id) {
-    contextBlock.push(`Active lead ID: ${sessionContext.active_lead_id}`);
+    contextBlock.push(`Active lead ID: ${sessionContext.active_lead_id} — use this for schedule_visit, log_measurement, update_lead WITHOUT asking the user which lead.`);
   }
   if (sessionContext.current_flow) {
     contextBlock.push(`Current flow: ${sessionContext.current_flow}`);
@@ -327,7 +315,7 @@ export function buildContentsFromHistory(
     });
     contents.push({
       role: "model",
-      parts: [{ text: "Samajh gaya, context note kar liya." }],
+      parts: [{ text: "समझ गया, संदर्भ नोट कर लिया।" }],
     });
   }
 

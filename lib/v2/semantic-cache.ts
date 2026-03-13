@@ -144,7 +144,8 @@ export function trySemanticCache(
 ): SemanticCacheOutcome {
   // When the user is already mid-flow (answering questions), let Gemini
   // handle it — it has the full conversation context to interpret short answers.
-  if (session.current_flow && session.pending_fields.length > 0) {
+  // Also covers "update_lead" enrichment flow (asking location/scope/size after lead is saved).
+  if (session.current_flow) {
     return MISS;
   }
 

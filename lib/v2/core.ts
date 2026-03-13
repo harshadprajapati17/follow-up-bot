@@ -27,7 +27,7 @@ import { findFingerprintMatch, saveFingerprint } from "./fingerprint-cache";
 import { buildContentsFromHistory, callGemini } from "./gemini-tools";
 import { getOrCreateCache } from "./gemini-cache";
 import { validateToolCall, extractValidEntitiesFromFailedToolCall } from "./validation";
-import { executeToolCall } from "./tool-handlers";
+import { executeToolCall, LEAD_ENRICHMENT_CHIPS } from "./tool-handlers";
 import { logV2Call } from "./logger";
 
 // When local resolver captures one field mid-flow, ask for the next one so the flow continues.
@@ -212,10 +212,41 @@ export async function handleChatV2(params: {
       conv = updateSession(conv, localResult.session_update);
     }
 
-    // If user is mid-flow and there are still fields to collect, ask for the next one.
-    // This prevents the flow from "stopping" after just noting one piece of info.
+    // If user skipped an enrichment chip, advance to the next enrichment question.
+    let enrichmentChips: Array<{ label: string; payload: string }> | undefined;
+    let enrichmentChipsType: "selection" | "suggestion" | undefined;
     let responseText = localResult.response;
-    if (conv.session.current_flow && conv.session.pending_fields.length > 0) {
+
+    if (localResult.advance_enrichment && conv.session.active_lead_id) {
+      // Build the set of already-collected enrichment fields from conversation history.
+      const collectedFields = new Set<string>();
+      for (const msg of conv.messages) {
+        if (msg.role === "tool_call" && msg.tool_args) {
+          for (const key of Object.keys(msg.tool_args)) {
+            if (msg.tool_args[key]) collectedFields.add(key);
+          }
+        }
+      }
+      const nextStep = LEAD_ENRICHMENT_CHIPS.find(({ field }) => !collectedFields.has(field));
+      if (nextStep) {
+        conv = updateSession(conv, { current_flow: "update_lead" });
+        const chips = nextStep.chips.length > 0
+          ? [...nextStep.chips, { label: "Skip ⏭", payload: "skip karo" }]
+          : undefined;
+        responseText = `ठीक है!\n\n${nextStep.question}`;
+        enrichmentChips = chips;
+        enrichmentChipsType = chips ? "selection" : undefined;
+      } else {
+        conv = updateSession(conv, { current_flow: null });
+        responseText = `ठीक है! अब विज़िट शेड्यूल करें?`;
+        enrichmentChips = [
+          { label: "विज़िट शेड्यूल करें", payload: "Visit schedule karo" },
+          { label: "बाद में", payload: "Baad mein karte hain" },
+        ];
+        enrichmentChipsType = "suggestion";
+      }
+    } else if (conv.session.current_flow && conv.session.pending_fields.length > 0) {
+      // If user is mid-flow and there are still fields to collect, ask for the next one.
       const nextField = conv.session.pending_fields[0];
       const followUp = NEXT_FIELD_PROMPT[nextField];
       if (followUp) {
@@ -233,7 +264,12 @@ export async function handleChatV2(params: {
     // Log to MongoDB for the /v2-logs visualization page.
     await logV2Call(buildLog({ requestId, userId, endpoint, layerHit: "local", userText: textStr, conversationLength: conv.messages.length, cacheUsed: false, cacheName: null, responseText, startTime, trace }));
 
-    return { status: "success", message: responseText, layer_hit: "local" };
+    return {
+      status: "success",
+      message: responseText,
+      layer_hit: "local",
+      ...(enrichmentChips ? { selection_chips: enrichmentChips, chips_type: enrichmentChipsType } : {}),
+    };
   }
 
   // LOCAL MISS — no pattern matched. Move to next layer.
@@ -270,14 +306,33 @@ export async function handleChatV2(params: {
     // Set the conversation flow and CLEAR old collected data — user is starting fresh.
     // Without this, a previous lead's phone number would carry over and we'd skip asking for it.
     if (keywordResult.flow_update) {
+      // If session already has an active lead, don't ask for lead_id again.
+      let pendingFields = keywordResult.flow_update.pending_fields;
+      if (conv.session.active_lead_id) {
+        pendingFields = pendingFields.filter((f) => f !== "lead_id");
+      }
       conv = updateSession(conv, {
         current_flow: keywordResult.flow_update.current_flow,
-        pending_fields: keywordResult.flow_update.pending_fields,
+        pending_fields: pendingFields,
         collected_entities: {},
       });
     }
 
-    const assistantMsg: ConversationMessage = { role: "assistant", content: keywordResult.response, timestamp: Date.now() };
+    // If the static response asks "kis lead ke liye" but we already have an active lead, override it.
+    let responseText = keywordResult.response;
+    if (
+      conv.session.active_lead_id &&
+      keywordResult.flow_update?.current_flow === "schedule_visit"
+    ) {
+      responseText = "विज़िट की तारीख और समय बताइए (जैसे: 15 मार्च, शाम 5 बजे)।";
+    } else if (
+      conv.session.active_lead_id &&
+      keywordResult.flow_update?.current_flow === "log_measurement"
+    ) {
+      responseText = "रूम का नाम और क्षेत्र (लंबाई × चौड़ाई फीट) बता दीजिए।";
+    }
+
+    const assistantMsg: ConversationMessage = { role: "assistant", content: responseText, timestamp: Date.now() };
     conv = appendMessage(conv, assistantMsg);
     await saveConversation(userId, conv);
 
@@ -368,7 +423,7 @@ export async function handleChatV2(params: {
     trace.push({ step: "validation", status: "skip", detail: "Skipped — Gemini failed", duration_ms: 0 });
     trace.push({ step: "tool_execution", status: "skip", detail: "Skipped — Gemini failed", duration_ms: 0 });
 
-    const fallback = "Samajh nahi aaya, thodi der baad phir se try kariye.";
+    const fallback = "समझ नहीं आया, थोड़ी देर बाद फिर से कोशिश करें।";
     trace.push({ step: "response", status: "error", detail: fallback, duration_ms: Date.now() - startTime });
 
     const assistantMsg: ConversationMessage = { role: "assistant", content: fallback, timestamp: Date.now() };
@@ -470,30 +525,63 @@ export async function handleChatV2(params: {
         conv = updateSession(conv, { active_lead_id: toolResult.created_lead_id, current_flow: null, pending_fields: [] });
       }
 
-      // Reset collection state after saving a lead (flow is done).
+      // After save_new_lead, start enrichment flow if any enrichment fields are missing.
       if (tc.name === "save_new_lead" && toolResult.success) {
-        conv = updateSession(conv, { current_flow: null, collected_entities: {}, pending_fields: [] });
+        const needsEnrichment = LEAD_ENRICHMENT_CHIPS.some(
+          ({ field }) => !sanitizedArgs[field] || String(sanitizedArgs[field]).trim() === ""
+        );
+        conv = updateSession(conv, {
+          current_flow: needsEnrichment ? "update_lead" : null,
+          collected_entities: {},
+          pending_fields: [],
+        });
       }
 
-      // Combine Gemini's text with the tool result into one reply.
-      if (responseText) {
-        responseText = `${responseText}\n\n${toolResult.message}`;
-      } else {
-        responseText = toolResult.message;
-      }
+      // After update_lead during enrichment flow, continue asking next missing field.
+      if (tc.name === "update_lead" && toolResult.success && conv.session.active_lead_id) {
+        const collectedFields = new Set<string>();
+        for (const msg of conv.messages) {
+          if ((msg.role === "tool_call") && msg.tool_args) {
+            for (const key of Object.keys(msg.tool_args)) {
+              if (msg.tool_args[key]) collectedFields.add(key);
+            }
+          }
+        }
+        // Also include args just saved
+        for (const key of Object.keys(tc.args)) {
+          if (tc.args[key]) collectedFields.add(key);
+        }
 
-      // Suggest the natural next step (e.g. "Ab visit schedule karein?").
-      if (toolResult.next_suggested_intents?.length) {
-        const next = toolResult.next_suggested_intents[0];
-        const suggestions: Record<string, string> = {
-          schedule_visit: "Ab visit schedule karein?",
-          log_measurement: "Ab measurement log karna hai?",
-          generate_quote: "Ab quote generate karein?",
-        };
-        if (suggestions[next]) {
-          responseText += ` ${suggestions[next]}`;
+        const nextStep = LEAD_ENRICHMENT_CHIPS.find(({ field }) => !collectedFields.has(field));
+        if (nextStep) {
+          conv = updateSession(conv, { current_flow: "update_lead" });
+          const chips = nextStep.chips.length > 0
+            ? [...nextStep.chips, { label: "Skip ⏭", payload: "skip karo" }]
+            : undefined;
+          toolResult = {
+            ...toolResult,
+            message: `ठीक है!\n\n${nextStep.question}`,
+            ...(chips ? { selection_chips: chips, chips_type: "selection" as const } : {}),
+          };
+        } else {
+          // All enrichment done — clear the enrichment flow
+          conv = updateSession(conv, { current_flow: null });
+          toolResult = {
+            ...toolResult,
+            message: `✓ लीड की जानकारी अपडेट हो गई!\n\nविज़िट शेड्यूल करें?`,
+            selection_chips: [
+              { label: "विज़िट शेड्यूल करें", payload: "Visit schedule karo" },
+              { label: "बाद में", payload: "Baad mein karte hain" },
+            ],
+            chips_type: "suggestion",
+          };
         }
       }
+
+      // Tool handler message is the authoritative reply; discard any Gemini text (should be empty per system prompt rule).
+      responseText = toolResult.message;
+
+      // Next step suggestions are now embedded in the tool result message itself — skip text duplication.
     } else {
       // VALIDATION FAILED — don't execute the tool. But preserve valid fields so we don't ask again.
       // e.g. user said "Harshad, 8866" — name is valid, phone isn't. Keep "Harshad" in session.
@@ -528,7 +616,7 @@ export async function handleChatV2(params: {
           validationErrors.length > 0
             ? ` Ye issue hai: ${validationErrors.join(". ")}`
             : "";
-        responseText = `Kuch details galat lag rahi hain, phir se check karke batao.${errorDetail}`;
+        responseText = `कुछ जानकारी गलत लग रही है, दोबारा जाँच करके बताइए।${errorDetail}`;
       }
     }
   } else {
@@ -539,7 +627,21 @@ export async function handleChatV2(params: {
 
   // Fallback if Gemini returned nothing useful.
   if (!responseText && geminiResponse.tool_calls.length === 0) {
-    responseText = "Samajh nahi aaya, thoda detail mein bata sakte hain?";
+    // Give a flow-aware fallback so the user knows what's still needed.
+    if (conv.session.current_flow === "save_new_lead") {
+      const still = conv.session.pending_fields;
+      if (still.includes("customer_name") && still.includes("customer_phone")) {
+        responseText = "ग्राहक का नाम और फ़ोन नंबर बताइए।";
+      } else if (still.includes("customer_name")) {
+        responseText = "ग्राहक का नाम बताइए।";
+      } else if (still.includes("customer_phone")) {
+        responseText = "ग्राहक का 10-digit फ़ोन नंबर बताइए।";
+      } else {
+        responseText = "समझ नहीं आया, थोड़ा और बताइए?";
+      }
+    } else {
+      responseText = "समझ नहीं आया, थोड़ा और बताइए?";
+    }
   }
 
   // =====================================================================
@@ -590,6 +692,7 @@ export async function handleChatV2(params: {
     layer_hit: "gemini",
     ...(toolExecuted ? { tool_executed: toolExecuted } : {}),
     ...(toolResult! ? { tool_result: toolResult } : {}),
+    ...(toolResult!?.selection_chips ? { selection_chips: toolResult!.selection_chips, chips_type: toolResult!.chips_type } : {}),
   };
 }
 
